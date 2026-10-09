@@ -1,4 +1,7 @@
-<img src="man/figures/logo.svg" alt="proMotif" width="440"/>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="man/figures/logo-dark.svg">
+  <img src="man/figures/logo-light.svg" alt="proMotif" width="440">
+</picture>
 
 # proMotif
 
