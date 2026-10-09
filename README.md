@@ -154,18 +154,42 @@ plots, the three significance plots, and a table you can download as CSV.
 
 ---
 
-## Example
+## Examples
 
 ```r
 library(proMotif)
-run_binding_site_analysis(
-  gene           = "ATP7B",
-  tf             = "MTF1",
-  threshold_frac = 0.75,
-  transcripts    = "all"
-)
-# -> results/ATP7B_MTF1/ with the CSV and PDFs
-```
 
-ATP7B is the copper-transporter gene and MTF1 is the metal-responsive TF that
-binds metal response elements (MREs) — a sensible pairing to probe at this locus.
+# 1. Basic run: writes the CSV + PDFs to results/ATP7B_MTF1/
+run_binding_site_analysis("ATP7B", "MTF1")
+
+# 2. Include alternative promoters and lower the threshold to catch weaker sites
+run_binding_site_analysis("ATP7B", "MTF1",
+                          transcripts = "all", threshold_frac = 0.75)
+
+# 3. A wider promoter window
+run_binding_site_analysis("TERT", "CTCF", upstream = 5000, downstream = 1000)
+
+# 4. A mouse gene (gene coordinates and the HOCOMOCO bundle switch to mouse)
+run_binding_site_analysis("Ripk3", "Rela",
+                          species = "mus_musculus", hocomoco_species = "mouse")
+
+# 5. Scan once, then restyle without re-querying the databases
+s <- scan_binding_sites("FOXP2", "FOXP1", transcripts = "all")
+p <- plot_binding_sites(s, base_size = 16, point_size = 4)
+p$by_transcript            # show a plot
+head(s$result)             # the hits table
+
+# 6. Keep everything in memory (no files written) and inspect the data
+res <- run_binding_site_analysis("MYC", "MAX", write_files = FALSE)
+res$result[order(res$result$p_adj), ]    # most significant sites first
+
+# 7. Lock the colour scheme so re-runs look identical
+run_binding_site_analysis("SNCA", "GATA1", color_seed = 42)
+
+# 8. Scan several TFs at one locus in a loop
+for (tf in c("SP1", "MAZ", "KLF4"))
+  run_binding_site_analysis("TERT", tf)
+
+# 9. Interactive: point-and-click front end
+launch_app()
+```
