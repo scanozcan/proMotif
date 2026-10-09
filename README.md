@@ -2,6 +2,8 @@
 
 # proMotif
 
+[![R-CMD-check](https://github.com/scanozcan/proMotif/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/scanozcan/proMotif/actions/workflows/R-CMD-check.yaml)
+
 Scan a gene's promoter for **transcription-factor binding sites** using JASPAR
 and HOCOMOCO motifs — no proteomics or sequence files needed. You give it a
 **gene symbol** and a **TF**; proMotif looks up the gene's transcripts from
