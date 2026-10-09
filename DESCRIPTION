@@ -1,0 +1,31 @@
+Package: proMotif
+Type: Package
+Title: Promoter Transcription-Factor Binding-Site Scanner
+Version: 0.1.0
+Authors@R: person("Can", "Ozcan", email = "s.canozcan89@gmail.com",
+                  role = c("aut", "cre"))
+Description: Scan a gene's promoter for transcription-factor binding sites using
+    JASPAR and HOCOMOCO position weight matrices. For a gene symbol and a TF,
+    it enumerates the gene's transcripts from Ensembl, fetches each promoter
+    window (with a UCSC fallback when Ensembl is unavailable), scans both
+    strands, and reports predicted sites in TSS-relative and absolute genomic
+    coordinates with per-transcript and genomic plots. Includes a Shiny app.
+    Reuses the GLproxScape package's Ensembl/JASPAR/HOCOMOCO fetchers and
+    motif-scan conventions.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Depends:
+    R (>= 4.1.0)
+Imports:
+    GLproxScape,
+    ggplot2,
+    grid,
+    httr,
+    stats,
+    utils
+Suggests:
+    shiny,
+    TFMPvalue
+Remotes:
+    github::scanozcan/GLproxScape
+Config/roxygen2/version: 8.1.1
