@@ -5,8 +5,8 @@
 [![R-CMD-check](https://github.com/scanozcan/proMotif/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/scanozcan/proMotif/actions/workflows/R-CMD-check.yaml)
 
 Scan a gene's promoter for **transcription-factor binding sites** using JASPAR
-and HOCOMOCO motifs — no proteomics or sequence files needed. You give it a
-**gene symbol** and a **TF**; proMotif looks up the gene's transcripts from
+and HOCOMOCO motifs. You give it a **gene symbol** and a **TF**; proMotif looks
+up the gene's transcripts from
 Ensembl, fetches each promoter sequence, scans both strands for the TF's motif
 from both databases, assigns each hit a statistical significance, and draws the
 results per transcript and on genomic coordinates. An interactive Shiny app is
