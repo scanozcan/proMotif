@@ -73,6 +73,14 @@ plot_binding_sites <- function(scan, base_size = 12, point_size = 2.6,
           strip.background = element_rect(fill = "grey92", color = NA))
 
   tss_lines <- data.frame(tss = reps$tss, is_canonical = reps$is_canonical)
+
+  ## Genomic view: collapse the same physical site re-detected across overlapping
+  ## promoter windows to a single marker. A site inside several transcripts' windows
+  ## is one genomic locus, so without this it would stack one point per transcript.
+  ## Keep per-database and per-strand distinctions.
+  gkeys   <- c("genomic_position", "strand", "database", "matrix_id")
+  gresult <- result[!duplicated(result[gkeys]), , drop = FALSE]
+
   grng  <- range(c(result$genomic_position, reps$tss))
   dir   <- if (gene_strand == 1) 1 else -1          # transcription direction on genomic axis
   y_arr <- max(result$score_frac) + 0.015
@@ -80,7 +88,7 @@ plot_binding_sites <- function(scan, base_size = 12, point_size = 2.6,
   if (length(can_tss) == 0) can_tss <- reps$tss[1]   # fallback if none flagged
   tss_arrows <- data.frame(x = can_tss, xend = can_tss + dir * 0.05 * diff(grng),
                            y = y_arr, yend = y_arr)
-  p3 <- ggplot(result, aes(genomic_position, score_frac)) +
+  p3 <- ggplot(gresult, aes(genomic_position, score_frac)) +
     geom_vline(data = tss_lines, aes(xintercept = tss, linetype = is_canonical),
                color = "grey45") +
     geom_segment(data = tss_arrows, aes(x = x, xend = xend, y = y, yend = yend),
@@ -96,8 +104,8 @@ plot_binding_sites <- function(scan, base_size = 12, point_size = 2.6,
     labs(x = sprintf("Absolute position on chromosome %s (bp)", gene_chr),
          y = "PWM score (fraction of max)", shape = "Motif strand",
          title = sprintf("Predicted %s binding sites at the %s locus (genomic)", tf, gene),
-         subtitle = sprintf("strand %s | lines = TSSs | threshold %.2f",
-                            ifelse(gene_strand == 1, "+", "-"), threshold_frac)) +
+         subtitle = sprintf("strand %s | lines = TSSs | threshold %.2f | %d site(s), shared promoters shown once",
+                            ifelse(gene_strand == 1, "+", "-"), threshold_frac, nrow(gresult))) +
     base_theme + theme(axis.text.x = element_text(angle = 30, hjust = 1))
 
   ## ---- significance plots (the three plots above are unchanged) ------------
@@ -125,9 +133,10 @@ plot_binding_sites <- function(scan, base_size = 12, point_size = 2.6,
       facet_wrap(~ transcript_label, ncol = 1, drop = FALSE) +
       theme(strip.text = element_text(size = base_size - 4),
             strip.background = element_rect(fill = "grey92", color = NA))
+    gresult$neglogq <- -log10(pmax(gresult$p_adj, 1e-300))
     sig_arrows <- data.frame(x = can_tss, xend = can_tss + dir * 0.05 * diff(grng),
                              y = max(result$neglogq), yend = max(result$neglogq))
-    sig$genomic_sig <- ggplot(result, aes(genomic_position, neglogq)) +
+    sig$genomic_sig <- ggplot(gresult, aes(genomic_position, neglogq)) +
       geom_hline(yintercept = sig_line, linetype = "dotted", color = "grey50") +
       geom_vline(data = tss_lines, aes(xintercept = tss, linetype = is_canonical),
                  color = "grey45") +

@@ -104,7 +104,7 @@ The three plot views:
 
 - **canonical** — predicted sites in the canonical transcript's promoter, by position relative to the TSS.
 - **by transcript** — one panel per transcript / alternative promoter (TSS).
-- **genomic** — all sites on real chromosome coordinates, with each TSS marked and an arrow showing the transcription direction from the canonical TSS.
+- **genomic** — all sites on real chromosome coordinates, with each TSS marked and an arrow showing the transcription direction from the canonical TSS. A site that falls inside several transcripts' promoter windows is one genomic locus, so it is drawn once here (per database and strand) rather than once per transcript as in the per-transcript view.
 
 The score plots put `score_frac` (fraction of the matrix's max score) on the
 y-axis; the significance plots put `-log10(adjusted p)` with a dotted line at
