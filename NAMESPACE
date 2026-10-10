@@ -12,4 +12,7 @@ importFrom(stats,
   embed,
   setNames
 )
-importFrom(utils,write.csv)
+importFrom(utils,
+  head,
+  write.csv
+)

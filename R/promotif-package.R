@@ -13,7 +13,7 @@
 #' @keywords internal
 #' @import ggplot2
 #' @importFrom stats embed setNames
-#' @importFrom utils write.csv
+#' @importFrom utils write.csv head
 "_PACKAGE"
 
 ## ggplot2 aesthetics reference data-frame columns by bare name; declare them
