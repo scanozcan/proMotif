@@ -57,14 +57,16 @@ launch_app()
 
 ## The functions
 
-proMotif has four functions. For most uses you only need the first or the app.
+For most uses you only need the first function or the app.
 
 | Function | What it does |
 |---|---|
-| `run_binding_site_analysis(gene, tf, ...)` | One-shot: scan + plots + writes a CSV and PDF figures to disk. Start here. |
+| `run_binding_site_analysis(gene, tf, ...)` | One-shot: scan + plots + writes a CSV and PDF figures to disk. Start here. **Omit `tf` for discovery mode** (see below). |
 | `launch_app()` | Interactive Shiny app — type a gene + TF, view the plots, download the table. |
 | `scan_binding_sites(gene, tf, ...)` | Just the scan (the slow, network part). Returns the data, no plots. |
 | `plot_binding_sites(scan, ...)` | Builds the plots from a `scan_binding_sites()` result (fast, local). |
+| `run_regulator_discovery(gene, ...)` | Discovery mode: rank a gene's candidate regulators against all of JASPAR CORE (see *Discovery mode*). |
+| `discover_regulators(gene, ...)` / `plot_regulators(disc)` | The discovery scan (data) and its plots. |
 
 The last two let you scan once and re-plot many times (e.g. restyle without
 re-querying the databases):
@@ -107,8 +109,9 @@ The three plot views:
 - **genomic** — all sites on real chromosome coordinates, with each TSS marked and an arrow showing the transcription direction from the canonical TSS. A site that falls inside several transcripts' promoter windows is one genomic locus, so it is drawn once here (per database and strand) rather than once per transcript as in the per-transcript view.
 
 The score plots put `score_frac` (fraction of the matrix's max score) on the
-y-axis; the significance plots put `-log10(adjusted p)` with a dotted line at
-p = 0.05.
+y-axis; the significance plots put `-log10(per-site p)` with a dotted line at
+p = 0.05. The per-site p-value follows the FIMO approach (see *Significance*
+below), so the strongest matches rise highest.
 
 ### CSV columns
 
@@ -120,9 +123,64 @@ p = 0.05.
 | `position` | site position relative to the TSS (bp; negative = upstream) |
 | `strand` | strand the motif matched (`+`/`-`) |
 | `score`, `score_frac` | raw PWM log-odds score and its fraction of the matrix max |
-| `pvalue`, `p_adj` | per-site p-value (GC-aware background) and Bonferroni-adjusted p (NA without `TFMPvalue`) |
+| `pvalue`, `qvalue` | FIMO-style per-site p-value (exact, GC-aware background) and its Benjamini-Hochberg FDR q-value over all positions tested (both NA without `TFMPvalue`) |
 | `genomic_position` | absolute chromosome coordinate of the site |
 | `site` | the matched promoter sequence |
+
+---
+
+## Discovery mode — "what regulates this gene?"
+
+Call `run_binding_site_analysis()` (or `discover_regulators()`) **with no TF**
+and proMotif flips from "does TF X bind gene Y?" to "which TFs *could* regulate
+gene Y?". It scans the canonical promoter against the **whole JASPAR CORE
+collection** and ranks transcription factors by their single strongest match,
+scored with the **same FIMO per-site p-value** as confirm mode.
+
+```r
+run_binding_site_analysis("SNCA")            # no TF -> discovery
+run_regulator_discovery("SNCA", top_n = 25)  # same, explicit, more TFs
+d <- discover_regulators("ATP7B")            # just the ranked table
+```
+
+**Extra packages** (discovery only; install once):
+
+```r
+install.packages(c("TFMPvalue", "RSQLite", "ggrepel"))
+BiocManager::install(c("TFBSTools", "JASPAR2024", "motifmatchr", "Biostrings"))
+```
+
+`TFMPvalue` (ranking metric) and a JASPAR data package (`JASPAR2024` + `RSQLite`)
+with `TFBSTools` are required; `motifmatchr` + `Biostrings` only pre-shortlist
+motifs for speed; `ggrepel` tidies the needle-map labels. All are `Suggests`, so
+the core (single-TF) workflow needs none of them.
+
+**Outputs** go to `results/<GENE>_regulators/`: a CSV (`*_candidate_regulators.csv`)
+and three PDFs — `*_regulators_ranking.pdf` (lollipop of top TFs by `-log10` p),
+`*_regulators_map.pdf` (best-site position per TF), and `*_regulators_needle.pdf`
+(a promoter needle plot: position vs significance, so site hotspots stand out).
+
+**How ties and redundancy are handled.** A TF with several matrices is
+represented by its best-scoring one. TFs whose best site falls at the **same
+locus** (within `site_window`, default 20 bp) are grouped — the same element is
+not listed many times. The best-p TF becomes the group representative and the
+others are listed in `shares_site_with`; a `(+N)` on a plot label means N more
+TFs share that site. **Nothing is dropped**: the CSV keeps every TF with a
+`site_group` id and an `is_representative` flag. TF family is only an
+annotation (colour), not a grouping key.
+
+**Important — read this as prioritisation, not proof.** Discovery is a
+motif-match ranking, **not** motif *enrichment* (there is no background set of
+sequences, unlike AME/HOMER/oPOSSUM) and **not** evidence of binding. A motif
+matches far more often than the factor actually binds; real occupancy depends on
+chromatin, concentration, cofactors and cell type. The ranking also favours
+longer, more informative motifs (a perfect long match is rarer by chance). Use
+it to decide **which TFs are worth following up**, and confirm with the single-TF
+mode plus orthogonal data (ChIP, accessibility).
+
+Key arguments: `top_n` (how many to show), `collapse_site` / `site_window`
+(shared-site grouping), `upstream`/`downstream` (promoter window),
+`tax_group` (e.g. `"vertebrates"`), `species`.
 
 ---
 
@@ -148,10 +206,16 @@ plots, the three significance plots, and a table you can download as CSV.
   TSS exist across all transcripts.
 - **Resilience.** Promoter sequence comes from Ensembl; if Ensembl times out or
   errors, proMotif automatically falls back to the UCSC REST API.
-- **Significance.** `p_adj` is the chance of seeing a match this strong under
-  the promoter's own base composition — i.e. **match significance**, not proof
-  of binding. A significant motif match is not the same as a TF actually
-  binding there (that depends on chromatin, accessibility and cell type).
+- **Significance (FIMO approach).** proMotif scores each site with a log-odds
+  PWM and assigns a p-value exactly as FIMO does: an exact dynamic-programming
+  computation (via `TFMPvalue`) of the probability that a random site drawn from
+  a zero-order, GC-aware background scores at least as high. Because this p-value
+  is monotone in the score, the strongest matches get the smallest p — this is
+  what the significance plots show (`-log10 per-site p`). `qvalue` is the
+  Benjamini-Hochberg FDR over all positions tested, again following FIMO.
+  This is **match significance** (how motif-like the sequence is), not proof of
+  binding: a strong match is not the same as a TF actually binding there, which
+  additionally depends on chromatin, accessibility, cofactors and cell type.
 - **Tuning.** Lower `threshold_frac` (e.g. 0.75) to surface weaker matches;
   widen `upstream`/`downstream` for a larger window.
 
@@ -184,7 +248,7 @@ head(s$result)             # the hits table
 
 # 6. Keep everything in memory (no files written) and inspect the data
 res <- run_binding_site_analysis("MYC", "MAX", write_files = FALSE)
-res$result[order(res$result$p_adj), ]    # most significant sites first
+res$result[order(res$result$pvalue), ]   # most significant sites first (FIMO p-value)
 
 # 7. Lock the colour scheme so re-runs look identical
 run_binding_site_analysis("SNCA", "GATA1", color_seed = 42)
@@ -195,4 +259,9 @@ for (tf in c("SP1", "MAZ", "KLF4"))
 
 # 9. Interactive: point-and-click front end
 launch_app()
+
+# 10. Discovery mode: rank candidate regulators of a gene (no TF given)
+run_binding_site_analysis("SNCA")                 # writes results/SNCA_regulators/
+d <- discover_regulators("ATP7B", top_n = 30)     # just the ranked table
+head(d$top[, c("tf", "pvalue", "qvalue", "n_at_site", "shares_site_with")])
 ```

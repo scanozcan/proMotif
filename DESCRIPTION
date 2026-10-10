@@ -9,9 +9,11 @@ Description: Scan a gene's promoter for transcription-factor binding sites using
     it enumerates the gene's transcripts from Ensembl, fetches each promoter
     window (with a UCSC fallback when Ensembl is unavailable), scans both
     strands, and reports predicted sites in TSS-relative and absolute genomic
-    coordinates with per-transcript and genomic plots. Includes a Shiny app.
-    Reuses the GLproxScape package's Ensembl/JASPAR/HOCOMOCO fetchers and
-    motif-scan conventions.
+    coordinates with per-transcript and genomic plots. A discovery mode (no TF
+    given) ranks a gene's candidate regulators against the whole JASPAR CORE
+    collection using the FIMO per-site p-value. Includes a Shiny app. Reuses the
+    GLproxScape package's Ensembl/JASPAR/HOCOMOCO fetchers and motif-scan
+    conventions.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Depends:
@@ -25,7 +27,13 @@ Imports:
     utils
 Suggests:
     shiny,
-    TFMPvalue
+    TFMPvalue,
+    TFBSTools,
+    JASPAR2024,
+    RSQLite,
+    Biostrings,
+    motifmatchr,
+    ggrepel
 Remotes:
     github::scanozcan/GLproxScape
 Config/roxygen2/version: 8.1.1

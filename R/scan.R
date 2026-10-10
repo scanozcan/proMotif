@@ -19,7 +19,7 @@
 #' @param transcripts \code{"protein_coding"} (default) or \code{"all"}.
 #' @param max_transcripts Cap on distinct TSS windows scanned (canonical always kept; default 8).
 #' @return A list with \code{result} (data.frame of predicted sites, including
-#'   \code{pvalue}/\code{p_adj}), \code{reps} (the per-TSS representative
+#'   \code{pvalue}/\code{qvalue}), \code{reps} (the per-TSS representative
 #'   transcripts), and \code{meta} (gene/TF/coordinate metadata). \code{result}
 #'   has zero rows if no sites pass the threshold.
 #' @examples
@@ -117,7 +117,7 @@ scan_binding_sites <- function(gene, tf,
       if (nrow(df) == 0) next
       n_pos <- 2L * max(1L, nchar(pinfo$seq) - pwms[[db]]$len + 1L)
       df$pvalue <- .site_pvalues(df$score, pwms[[db]]$pwm, bg)
-      df$p_adj  <- pmin(1, df$pvalue * n_pos)   # Bonferroni over positions tested
+      df$qvalue <- .bh_qvalue(df$pvalue, n_pos)  # FIMO-style BH/FDR over positions tested
       df$genomic_position <- if (gene_strand == 1) rp$tss + df$position
                              else rp$tss - df$position
       rows[[paste(rp$transcript_id, db)]] <- cbind(

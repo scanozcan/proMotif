@@ -10,14 +10,20 @@
 #'   \code{FALSE} to only return objects (as the Shiny app does).
 #' @param color_seed Optional integer to fix the database colours reproducibly.
 #' @param base_size,point_size Plot font and marker size.
+#' @param top_n Number of candidate regulators to return in discovery mode
+#'   (used only when \code{tf} is \code{NULL}; see Details).
+#' @details If \code{tf} is \code{NULL} or empty, the function switches to
+#'   discovery mode and calls \code{\link{run_regulator_discovery}} to rank the
+#'   gene's candidate regulators instead of scanning one named TF.
 #' @return Invisibly, a list with \code{result} (data.frame), \code{plots}
 #'   (the ggplots, or \code{NULL} if no sites), and \code{meta}.
 #' @examples
 #' \dontrun{
 #' run_binding_site_analysis("ATP7B", "MTF1", threshold_frac = 0.75)
+#' run_binding_site_analysis("SNCA")   # no TF -> discovery mode
 #' }
 #' @export
-run_binding_site_analysis <- function(gene, tf,
+run_binding_site_analysis <- function(gene, tf = NULL,
                                       species          = "homo_sapiens",
                                       upstream         = 2500,
                                       downstream       = 500,
@@ -30,8 +36,19 @@ run_binding_site_analysis <- function(gene, tf,
                                       write_files      = TRUE,
                                       color_seed       = NULL,
                                       base_size        = 12,
-                                      point_size       = 2.6) {
+                                      point_size       = 2.6,
+                                      top_n            = 20) {
   transcripts <- match.arg(transcripts)
+
+  ## No TF supplied -> discovery mode (rank candidate regulators).
+  if (is.null(tf) || !nzchar(tf)) {
+    message("No TF supplied -> discovery mode: ranking candidate regulators of ", gene, ".")
+    return(run_regulator_discovery(gene, species = species,
+             upstream = upstream, downstream = downstream,
+             top_n = top_n, out_root = out_root, write_files = write_files,
+             base_size = base_size, point_size = point_size))
+  }
+
   scan <- scan_binding_sites(gene, tf, species, upstream, downstream, threshold_frac,
                              hocomoco_version, hocomoco_species, transcripts, max_transcripts)
   out_dir  <- file.path(out_root, paste0(gene, "_", tf))

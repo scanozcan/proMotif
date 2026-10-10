@@ -110,10 +110,10 @@ plot_binding_sites <- function(scan, base_size = 12, point_size = 2.6,
 
   ## ---- significance plots (the three plots above are unchanged) ------------
   sig <- list(canonical_sig = NULL, by_transcript_sig = NULL, genomic_sig = NULL)
-  if ("p_adj" %in% names(result) && any(is.finite(result$p_adj))) {
-    result$neglogq <- -log10(pmax(result$p_adj, 1e-300))
+  if ("pvalue" %in% names(result) && any(is.finite(result$pvalue))) {
+    result$neglogq <- -log10(pmax(result$pvalue, 1e-300))
     sig_line <- -log10(0.05)
-    sig_sub  <- "y = -log10 adjusted p (Bonferroni over positions tested, GC-aware background); dotted line = 0.05"
+    sig_sub  <- "y = -log10 per-site p (TFMPvalue, GC-aware background); higher = stronger match; dotted line = 0.05"
     sig_landscape <- function(d, title) {
       ggplot(d, aes(position, neglogq, color = database)) +
         geom_hline(yintercept = sig_line, linetype = "dotted", color = "grey50") +
@@ -122,7 +122,7 @@ plot_binding_sites <- function(scan, base_size = 12, point_size = 2.6,
         scale_shape_manual(values = shape_vals) +
         scale_color_manual(values = db_cols, name = "Database") +
         scale_x_continuous(n.breaks = 6) +
-        labs(x = "Position relative to TSS (bp)", y = "-log10 adjusted p",
+        labs(x = "Position relative to TSS (bp)", y = "-log10 per-site p",
              shape = "Motif strand", title = title, subtitle = sig_sub) + base_theme
     }
     if (nrow(can) > 0)
@@ -133,7 +133,7 @@ plot_binding_sites <- function(scan, base_size = 12, point_size = 2.6,
       facet_wrap(~ transcript_label, ncol = 1, drop = FALSE) +
       theme(strip.text = element_text(size = base_size - 4),
             strip.background = element_rect(fill = "grey92", color = NA))
-    gresult$neglogq <- -log10(pmax(gresult$p_adj, 1e-300))
+    gresult$neglogq <- -log10(pmax(gresult$pvalue, 1e-300))
     sig_arrows <- data.frame(x = can_tss, xend = can_tss + dir * 0.05 * diff(grng),
                              y = max(result$neglogq), yend = max(result$neglogq))
     sig$genomic_sig <- ggplot(gresult, aes(genomic_position, neglogq)) +
@@ -151,7 +151,7 @@ plot_binding_sites <- function(scan, base_size = 12, point_size = 2.6,
                             name = "TSS") +
       scale_x_continuous(labels = .fmt_bp, n.breaks = 5) +
       labs(x = sprintf("Absolute position on chromosome %s (bp)", gene_chr),
-           y = "-log10 adjusted p", shape = "Motif strand",
+           y = "-log10 per-site p", shape = "Motif strand",
            title = sprintf("%s binding-site significance at the %s locus (genomic)", tf, gene),
            subtitle = sig_sub) +
       base_theme + theme(axis.text.x = element_text(angle = 30, hjust = 1))

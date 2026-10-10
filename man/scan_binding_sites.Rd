@@ -36,7 +36,7 @@ scan_binding_sites(
 }
 \value{
 A list with \code{result} (data.frame of predicted sites, including
-  \code{pvalue}/\code{p_adj}), \code{reps} (the per-TSS representative
+  \code{pvalue}/\code{qvalue}), \code{reps} (the per-TSS representative
   transcripts), and \code{meta} (gene/TF/coordinate metadata). \code{result}
   has zero rows if no sites pass the threshold.
 }

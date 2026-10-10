@@ -21,7 +21,7 @@
 utils::globalVariables(c("position", "score_frac", "database", "strand",
                          "genomic_position", "is_canonical", "tss",
                          "transcript_label", "x", "xend", "y", "yend",
-                         "neglogq"))
+                         "neglogq", "neglogp", "tf_disp", "family_lab"))
 
 ## ---- internal helpers ------------------------------------------------------
 
@@ -164,4 +164,140 @@ utils::globalVariables(c("position", "score_frac", "database", "strand",
     tryCatch(TFMPvalue::TFMsc2pv(m, s, bg, type = "PWM"),
              error = function(e) NA_real_), numeric(1))
   pv[match(scores, uq)]
+}
+
+## FIMO-style Benjamini-Hochberg q-values (FDR) for the reported sites.
+## `p` are the p-values of sites kept above the score threshold; because the
+## per-site p-value is monotone in the PWM score, these are the smallest
+## p-values among the `m` positions tested (both strands), occupying ranks
+## 1..length(p). Thus q_(i) = p_(i) * m / i, enforced monotone non-decreasing.
+## This matches FIMO's p -> q conversion. Returns NA if p-values are
+## unavailable (TFMPvalue not installed).
+.bh_qvalue <- function(p, m) {
+  if (all(is.na(p))) return(rep(NA_real_, length(p)))
+  o   <- order(p)
+  ps  <- p[o]
+  q   <- rev(cummin(rev(ps * m / seq_along(ps))))
+  res <- numeric(length(p)); res[o] <- pmin(q, 1)
+  res
+}
+
+## ---- discovery-mode helpers ------------------------------------------------
+
+## PFM counts (4 x L, rows A,C,G,T) -> log2-odds PWM against a flat background.
+.pfm_to_logodds <- function(counts, pseudo = 0.8,
+                            bg = c(A = .25, C = .25, G = .25, T = .25)) {
+  counts <- counts[c("A", "C", "G", "T"), , drop = FALSE]
+  L  <- ncol(counts); cs <- colSums(counts)
+  ppm <- vapply(seq_len(L),
+                function(j) (counts[, j] + pseudo * bg) / (cs[j] + pseudo),
+                numeric(4))
+  rownames(ppm) <- c("A", "C", "G", "T")
+  log2(ppm / bg)
+}
+
+## Memory-bounded FIMO p-value. TFMPvalue::TFMsc2pv on a continuous real PWM can
+## refine its score lattice until it needs tens of GB. FIMO avoids this by
+## discretising the PWM to a fixed-resolution integer lattice; we do the same
+## (bins steps across the matrix min..max score), capping memory per matrix.
+## Returns P[random site scores >= observed] under background bg, or NA.
+.fimo_pvalue <- function(pwm, score, bg, bins = 1000) {
+  if (!requireNamespace("TFMPvalue", quietly = TRUE)) return(NA_real_)
+  rng <- sum(apply(pwm, 2, max)) - sum(apply(pwm, 2, min))
+  if (!is.finite(rng) || rng <= 0) return(NA_real_)
+  gran <- rng / bins
+  m <- round(pwm / gran); rownames(m) <- c("A", "C", "G", "T")
+  ## score the site on the SAME integer matrix and clamp to its achievable range,
+  ## else a perfect match can exceed the rounded max and TFMsc2pv returns 0.
+  s <- round(score / gran)
+  s <- min(max(s, sum(apply(m, 2, min))), sum(apply(m, 2, max)))
+  tryCatch(TFMPvalue::TFMsc2pv(m, s, bg, type = "PWM"),
+           error = function(e) NA_real_)
+}
+
+## Best single site (both strands) for one motif in a promoter sequence.
+.best_site <- function(seq, tss_i, pwm_obj) {
+  pwm <- pwm_obj$pwm; L <- pwm_obj$len; n <- nchar(seq)
+  if (n < L) return(NULL)
+  max_s <- sum(apply(pwm, 2, max)); min_s <- sum(apply(pwm, 2, min))
+  fwd <- strsplit(seq, "")[[1]]
+  rmap <- c(A = "T", T = "A", G = "C", C = "G", N = "N"); rv <- rev(rmap[fwd])
+  fs <- .score_pwm_positions(fwd, pwm); rs <- .score_pwm_positions(rv, pwm)
+  bf <- if (length(fs)) which.max(fs) else NA_integer_
+  br <- if (length(rs)) which.max(rs) else NA_integer_
+  sf <- if (!is.na(bf)) fs[bf] else -Inf
+  sr <- if (!is.na(br)) rs[br] else -Inf
+  if (sf >= sr) { s <- sf; start <- bf;               strand <- "+" }
+  else          { s <- sr; start <- n - (br + L - 2); strand <- "-" }
+  list(score = s, start = start, strand = strand,
+       score_frac = (s - min_s) / (max_s - min_s),
+       position = start - tss_i,
+       site = substring(seq, start, start + L - 1))
+}
+
+## Fetch the canonical promoter for a gene (Ensembl, UCSC fallback).
+.canonical_promoter <- function(gene, species, upstream, downstream) {
+  js <- .ensembl_lookup_expand(gene, species)
+  gene_chr <- js$seq_region_name; gene_strand <- js$strand
+  txs <- js$Transcript %||% list()
+  if (length(txs) == 0) stop("No transcripts returned for ", gene)
+  txdf <- do.call(rbind, lapply(txs, function(tx) data.frame(
+    transcript_id = tx$id %||% NA_character_,
+    is_canonical  = isTRUE((tx$is_canonical %||% 0) == 1),
+    start = as.numeric(tx$start), end = as.numeric(tx$end),
+    stringsAsFactors = FALSE)))
+  txdf$tss <- if (gene_strand == 1) txdf$start else txdf$end
+  rp <- if (any(txdf$is_canonical)) txdf[txdf$is_canonical, ][1, ] else txdf[1, ]
+  gene_info <- list(name = gene, chr = gene_chr, strand = gene_strand,
+                    tss = rp$tss, start = rp$start, end = rp$end,
+                    species = species, transcript_id = rp$transcript_id)
+  pinfo <- .with_retry(
+    function() GLproxScape::fetch_promoter_seq(gene_info, upstream = upstream,
+                                               downstream = downstream),
+    tries = 2, waits = c(3, 8), what = paste("Ensembl seq", rp$transcript_id))
+  if (is.null(pinfo))
+    pinfo <- .fetch_seq_ucsc(gene_chr, rp$tss, gene_strand, upstream, downstream, species)
+  if (is.null(pinfo)) stop("Could not fetch canonical promoter for ", gene, ".")
+  list(pinfo = pinfo, chr = gene_chr, strand = gene_strand,
+       tss = rp$tss, transcript_id = rp$transcript_id)
+}
+
+## Fetch the JASPAR CORE motif collection as a list of pwm objects
+## (pwm = log-odds matrix, len, id, name, family).
+.jaspar_core_pwms <- function(collection = "CORE", tax_group = "vertebrates",
+                              jaspar_db = NULL) {
+  if (!requireNamespace("TFBSTools", quietly = TRUE))
+    stop("Discovery mode needs TFBSTools: BiocManager::install('TFBSTools').")
+  con <- NULL
+  if (is.null(jaspar_db)) {
+    cand <- c("JASPAR2024", "JASPAR2022", "JASPAR2020")
+    have <- cand[vapply(cand, requireNamespace, logical(1), quietly = TRUE)]
+    if (!length(have))
+      stop("Install a JASPAR data package, e.g. BiocManager::install('JASPAR2024').")
+    jpkg <- have[1]; message("  using motif database: ", jpkg)
+    if (jpkg == "JASPAR2024") {
+      if (!requireNamespace("RSQLite", quietly = TRUE))
+        stop("JASPAR2024 needs RSQLite: install.packages('RSQLite').")
+      jobj  <- get("JASPAR2024", asNamespace("JASPAR2024"))()
+      dbfun <- get("db", asNamespace("JASPAR2024"))
+      con   <- RSQLite::dbConnect(RSQLite::SQLite(), dbfun(jobj))
+      jaspar_db <- con
+    } else {
+      jaspar_db <- get(jpkg, asNamespace(jpkg))
+    }
+  }
+  pfms <- TFBSTools::getMatrixSet(
+    jaspar_db, list(collection = collection, tax_group = tax_group,
+                    matrixtype = "PFM"))
+  if (!is.null(con)) try(RSQLite::dbDisconnect(con), silent = TRUE)
+  if (!length(pfms)) stop("No JASPAR matrices returned for the chosen options.")
+  message("  fetched ", length(pfms), " ", tax_group, " ", collection, " motifs.")
+  lapply(as.list(pfms), function(pf) {
+    cm <- as.matrix(TFBSTools::Matrix(pf)); rownames(cm) <- c("A", "C", "G", "T")
+    fam <- tryCatch(TFBSTools::tags(pf)$family, error = function(e) NULL)
+    fam <- fam[nzchar(fam)]
+    fam <- if (length(fam)) paste(unique(fam), collapse = "/") else NA_character_
+    list(pwm = .pfm_to_logodds(cm), len = ncol(cm),
+         id = TFBSTools::ID(pf), name = TFBSTools::name(pf), family = fam)
+  })
 }

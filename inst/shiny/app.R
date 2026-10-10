@@ -125,7 +125,7 @@ server <- function(input, output, session) {
     r <- scan_rv()$result
     cols <- c("transcript_id", "is_canonical", "database", "matrix_id",
               "position", "strand", "score", "score_frac",
-              "pvalue", "p_adj", "genomic_position", "site")
+              "pvalue", "qvalue", "genomic_position", "site")
     r[, intersect(cols, names(r))]
   })
   output$dl_csv <- downloadHandler(

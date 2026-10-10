@@ -6,7 +6,7 @@
 \usage{
 run_binding_site_analysis(
   gene,
-  tf,
+  tf = NULL,
   species = "homo_sapiens",
   upstream = 2500,
   downstream = 500,
@@ -19,7 +19,8 @@ run_binding_site_analysis(
   write_files = TRUE,
   color_seed = NULL,
   base_size = 12,
-  point_size = 2.6
+  point_size = 2.6,
+  top_n = 20
 )
 }
 \arguments{
@@ -47,6 +48,9 @@ run_binding_site_analysis(
 \item{color_seed}{Optional integer to fix the database colours reproducibly.}
 
 \item{base_size, point_size}{Plot font and marker size.}
+
+\item{top_n}{Number of candidate regulators to return in discovery mode
+(used only when \code{tf} is \code{NULL}; see Details).}
 }
 \value{
 Invisibly, a list with \code{result} (data.frame), \code{plots}
@@ -57,8 +61,14 @@ Convenience wrapper: runs \code{\link{scan_binding_sites}} then
 \code{\link{plot_binding_sites}}, and (by default) writes a CSV and the
 score-based and significance PDF figures to \code{out_root/<GENE>_<TF>/}.
 }
+\details{
+If \code{tf} is \code{NULL} or empty, the function switches to
+  discovery mode and calls \code{\link{run_regulator_discovery}} to rank the
+  gene's candidate regulators instead of scanning one named TF.
+}
 \examples{
 \dontrun{
 run_binding_site_analysis("ATP7B", "MTF1", threshold_frac = 0.75)
+run_binding_site_analysis("SNCA")   # no TF -> discovery mode
 }
 }
