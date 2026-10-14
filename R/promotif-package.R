@@ -21,7 +21,10 @@
 utils::globalVariables(c("position", "score_frac", "database", "strand",
                          "genomic_position", "is_canonical", "tss",
                          "transcript_label", "x", "xend", "y", "yend",
-                         "neglogq", "neglogp", "tf_disp", "family_lab"))
+                         "neglogq", "neglogp", "tf_disp", "family_lab",
+                         "xmin", "xmax", "ymin", "ymax", "region", "lab", "lab_y",
+                         "kind", "n", "l", "chip_frac_exp", "chip_n_exp",
+                         "status", "tf", "class"))
 
 ## ---- internal helpers ------------------------------------------------------
 
@@ -158,11 +161,11 @@ utils::globalVariables(c("position", "score_frac", "database", "strand",
 .site_pvalues <- function(scores, pwm, bg) {
   if (!requireNamespace("TFMPvalue", quietly = TRUE))
     return(rep(NA_real_, length(scores)))
-  m <- pwm; rownames(m) <- c("A", "C", "G", "T")
+  ## Same discretised + clamped computation as discovery mode (.fimo_pvalue):
+  ## the continuous TFMsc2pv returned p = 0 for (near-)perfect matches, which
+  ## showed up as -log10 p = 300 in the significance plots.
   uq <- unique(scores)
-  pv <- vapply(uq, function(s)
-    tryCatch(TFMPvalue::TFMsc2pv(m, s, bg, type = "PWM"),
-             error = function(e) NA_real_), numeric(1))
+  pv <- vapply(uq, function(s) .fimo_pvalue(pwm, s, bg), numeric(1))
   pv[match(scores, uq)]
 }
 

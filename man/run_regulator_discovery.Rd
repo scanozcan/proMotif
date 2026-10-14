@@ -14,6 +14,10 @@ run_regulator_discovery(
   write_files = TRUE,
   base_size = 12,
   point_size = 3,
+  chip = FALSE,
+  chip_distance = 1,
+  chip_cell_pattern = NULL,
+  chip_max_mb = 300,
   ...
 )
 }
@@ -31,6 +35,16 @@ run_regulator_discovery(
 \item{write_files}{Write the CSV and PDFs (default TRUE).}
 
 \item{base_size, point_size}{Plot font and marker size.}
+
+\item{chip}{Add ChIP-Atlas Target Genes support for the top TFs
+(\code{\link{add_chip_targets}}; default \code{FALSE}).}
+
+\item{chip_distance}{1, 5 or 10 kb around the TSS.}
+
+\item{chip_cell_pattern}{Optional regular expression restricting ChIP
+experiments to cell types.}
+
+\item{chip_max_mb}{Skip ChIP-Atlas files larger than this (MB).}
 
 \item{...}{Passed to \code{\link{discover_regulators}}.}
 }

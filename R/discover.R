@@ -228,6 +228,12 @@ plot_regulators <- function(disc, base_size = 12, point_size = 3) {
 #' @param out_root Output folder (default \code{"results"}).
 #' @param write_files Write the CSV and PDFs (default TRUE).
 #' @param base_size,point_size Plot font and marker size.
+#' @param chip Add ChIP-Atlas Target Genes support for the top TFs
+#'   (\code{\link{add_chip_targets}}; default \code{FALSE}).
+#' @param chip_distance 1, 5 or 10 kb around the TSS.
+#' @param chip_cell_pattern Optional regular expression restricting ChIP
+#'   experiments to cell types.
+#' @param chip_max_mb Skip ChIP-Atlas files larger than this (MB).
 #' @param ... Passed to \code{\link{discover_regulators}}.
 #' @return Invisibly, a list with \code{result}, \code{top}, \code{plots}, \code{meta}.
 #' @examples
@@ -239,26 +245,37 @@ run_regulator_discovery <- function(gene, species = "homo_sapiens",
                                     upstream = 2500, downstream = 500,
                                     top_n = 20, out_root = "results",
                                     write_files = TRUE,
-                                    base_size = 12, point_size = 3, ...) {
+                                    base_size = 12, point_size = 3,
+                                    chip = FALSE, chip_distance = 1,
+                                    chip_cell_pattern = NULL, chip_max_mb = 300, ...) {
   disc  <- discover_regulators(gene, species = species, upstream = upstream,
                                downstream = downstream, top_n = top_n, ...)
+  if (isTRUE(chip))
+    disc <- add_chip_targets(disc, distance = chip_distance,
+                             cell_pattern = chip_cell_pattern, max_mb = chip_max_mb)
   plots <- plot_regulators(disc, base_size = base_size, point_size = point_size)
+  if (isTRUE(chip))
+    plots$chip <- plot_regulators_chip(disc, base_size = base_size, point_size = point_size)
   if (write_files) {
     out_dir <- file.path(out_root, paste0(gene, "_regulators"))
     dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
     csv_path <- file.path(out_dir, sprintf("%s_candidate_regulators.csv", gene))
-    utils::write.csv(disc$result, csv_path, row.names = FALSE)
+    write.csv(disc$result, csv_path, row.names = FALSE)
     message("Wrote: ", csv_path, "  (", nrow(disc$result), " TFs)")
-    h <- max(4, 0.32 * nrow(disc$top) + 1.5)
     if (!is.null(plots$ranking))
       ggsave(file.path(out_dir, sprintf("%s_regulators_ranking.pdf", gene)),
-             plots$ranking, width = 9, height = h, limitsize = FALSE)
+             plots$ranking, width = 9, height = max(4, 0.32 * nrow(disc$top) + 1.5),
+             limitsize = FALSE)
     if (!is.null(plots$map))
       ggsave(file.path(out_dir, sprintf("%s_regulators_map.pdf", gene)),
-             plots$map, width = 9, height = h, limitsize = FALSE)
+             plots$map, width = 9, height = max(4, 0.32 * nrow(disc$top) + 1.5),
+             limitsize = FALSE)
     if (!is.null(plots$needle))
       ggsave(file.path(out_dir, sprintf("%s_regulators_needle.pdf", gene)),
              plots$needle, width = 10, height = 5)
+    if (!is.null(plots$chip))
+      ggsave(file.path(out_dir, sprintf("%s_regulators_chip.pdf", gene)),
+             plots$chip, width = 10, height = 6.5)
     message("Wrote plots to: ", out_dir)
   }
   message("Done (discovery).")

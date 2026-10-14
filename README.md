@@ -67,6 +67,9 @@ For most uses you only need the first function or the app.
 | `plot_binding_sites(scan, ...)` | Builds the plots from a `scan_binding_sites()` result (fast, local). |
 | `run_regulator_discovery(gene, ...)` | Discovery mode: rank a gene's candidate regulators against all of JASPAR CORE (see *Discovery mode*). |
 | `discover_regulators(gene, ...)` / `plot_regulators(disc)` | The discovery scan (data) and its plots. |
+| `run_promoter_comparison(gene, ...)` | TFs that distinguish a gene's alternative promoters (see *Alternative promoters*). |
+| `plot_promoter_map(scan)` / `summarise_promoters(scan)` | Sites across all promoters of a gene, and a per-promoter summary. |
+| `add_chip_peaks(scan)` / `add_chip_targets(disc)` | Add ChIP-Atlas evidence (also via `chip = TRUE`, see *ChIP-Atlas evidence*). |
 
 The last two let you scan once and re-plot many times (e.g. restyle without
 re-querying the databases):
@@ -86,11 +89,23 @@ p$genomic                                     # show one plot
 | `upstream`, `downstream` | `2500`, `500` | promoter window around each TSS (bp) |
 | `threshold_frac` | `0.80` | PWM cutoff as a fraction of the matrix min–max score |
 | `transcripts` | `"protein_coding"` | or `"all"` (see *Alternative promoters* below) |
-| `max_transcripts` | `8` | cap on distinct TSS windows scanned (canonical always kept) |
+| `max_transcripts` | `8` | cap on TSS windows scanned (canonical first, then one TSS per promoter) |
 | `hocomoco_version`, `hocomoco_species` | `"v12"`, `"human"` | HOCOMOCO bundle |
 | `out_root` | `"results"` | output folder |
 | `color_seed` | `NULL` | fix the two database colours reproducibly (NULL = fresh each run) |
 | `base_size`, `point_size` | `12`, `2.6` | plot font and marker size |
+| **Promoters** | | |
+| `scan_unit` | `"tss"` | `"tss"` = one window per distinct TSS; `"promoter"` = one window per promoter |
+| `max_overlap` | `0.2` | TSSs whose windows overlap by at least this fraction form one promoter |
+| `merge_dist` | `NULL` | override: TSSs closer than this (bp) form one promoter (`NULL` = from `max_overlap`, ~2.4 kb) |
+| **ChIP-Atlas** (human) | | |
+| `chip` | `FALSE` | add ChIP-Atlas evidence (downloaded once, then cached) |
+| `chip_threshold` | `"05"` | peak q-value class: `"05"`, `"10"`, `"20"` (q < 1e-5, 1e-10, 1e-20) |
+| `chip_cell_pattern` | `NULL` | regex restricting experiments to cell types, e.g. `"HepG2\|liver"` |
+| `chip_max_mb` | `300` | skip ChIP-Atlas files larger than this (MB) |
+| `chip_ring_p` | `1e-3` | promoter map: ring in-peak sites with per-site p at or below this |
+| `chip_ring_min_exp` | `1` | promoter map: ring only sites supported by at least this many experiments |
+| `chip_distance` | `1` | discovery mode only (`run_regulator_discovery`): kb around the TSS (1, 5 or 10) |
 
 ---
 
@@ -126,6 +141,56 @@ below), so the strongest matches rise highest.
 | `pvalue`, `qvalue` | FIMO-style per-site p-value (exact, GC-aware background) and its Benjamini-Hochberg FDR q-value over all positions tested (both NA without `TFMPvalue`) |
 | `genomic_position` | absolute chromosome coordinate of the site |
 | `site` | the matched promoter sequence |
+
+---
+
+## Alternative promoters
+
+Annotated transcripts often start only a few bp apart, so their promoter windows
+carry almost the same sequence. proMotif groups TSSs into **promoters**: TSSs
+whose scan windows overlap by at least `max_overlap` (default 20%, i.e. TSSs
+within ~2.4 kb for a -2500/+500 window) form one promoter, numbered P1, P2, ...
+from 5' to 3'. Every run prints the gene's promoter structure.
+
+```r
+run_binding_site_analysis("TP73", "TP53", transcripts = "all",
+                          scan_unit = "promoter")   # one window per promoter
+run_promoter_comparison("TP73", transcripts = "all")  # TFs that distinguish them
+```
+
+Outputs: `*_promoters.csv` (per-promoter summary) and `*_promoter_map.pdf`
+(each promoter's window labelled with the number of transcripts grouped there,
+`*` = canonical; every TSS drawn; one panel per promoter when they are far
+apart). `max_transcripts` keeps the canonical TSS first, then one TSS per
+promoter, so no promoter is silently dropped.
+
+`run_promoter_comparison()` scans each promoter against JASPAR CORE and compares
+the **window p-value** of each TF's best site, 1 - (1 - p)^m (m = positions
+tested): the chance that a random window of this size holds a site this strong.
+Windows have equal length, so promoters are compared fairly. Calls
+(`P1-specific`, `shared`, ...) are a prioritisation, not proof of binding.
+
+## ChIP-Atlas evidence
+
+`chip = TRUE` adds public ChIP-seq evidence from
+[ChIP-Atlas](https://chip-atlas.org) (human, hg38). Files are downloaded once and
+cached; files above `chip_max_mb` (default 300 MB) are skipped with a message.
+
+```r
+run_binding_site_analysis("ATP7B", "MTF1", chip = TRUE,
+                          chip_cell_pattern = "HepG2|liver")
+run_regulator_discovery("MT2A", chip = TRUE, chip_distance = 1)
+```
+
+- **Confirm mode:** each site gets `chip_n_exp`, `chip_max_score`,
+  `chip_cell_types` and `chip_supported`; the promoter map gains a peak-coverage
+  track, and in-peak sites with p <= `chip_ring_p` (default 1e-3) get a black ring.
+- **Discovery mode:** each top TF gets the share of its ChIP-Atlas experiments
+  with a peak within +/- 1/5/10 kb of the TSS, plus a motif-vs-ChIP plot.
+
+Caveats: a peak (~200-500 bp) shows the TF binds that region in some cell type,
+not necessarily at the predicted motif or in your cells; HOCOMOCO matrices were
+partly trained on public ChIP-seq, so agreement with HOCOMOCO is partly circular.
 
 ---
 

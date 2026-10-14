@@ -14,7 +14,10 @@ scan_binding_sites(
   hocomoco_version = "v12",
   hocomoco_species = "human",
   transcripts = c("protein_coding", "all"),
-  max_transcripts = 8
+  max_transcripts = 8,
+  merge_dist = NULL,
+  scan_unit = c("tss", "promoter"),
+  max_overlap = 0.2
 )
 }
 \arguments{
@@ -32,29 +35,46 @@ scan_binding_sites(
 
 \item{transcripts}{\code{"protein_coding"} (default) or \code{"all"}.}
 
-\item{max_transcripts}{Cap on distinct TSS windows scanned (canonical always kept; default 8).}
+\item{max_transcripts}{Cap on TSS windows scanned (default 8). The canonical
+TSS is kept first, then one TSS per promoter.}
+
+\item{merge_dist}{TSSs closer than this (bp) form one promoter. Default
+\code{NULL} = derived from \code{max_overlap} and the window.}
+
+\item{scan_unit}{\code{"tss"} (default; one window per distinct TSS) or
+\code{"promoter"} (one window per promoter).}
+
+\item{max_overlap}{Window overlap fraction at or above which TSSs belong to
+the same promoter (default 0.2).}
 }
 \value{
 A list with \code{result} (data.frame of predicted sites, including
-  \code{pvalue}/\code{qvalue}), \code{reps} (the per-TSS representative
-  transcripts), and \code{meta} (gene/TF/coordinate metadata). \code{result}
-  has zero rows if no sites pass the threshold.
+  \code{pvalue}, \code{qvalue}, \code{promoter_id}, \code{in_promoter_windows}),
+  \code{reps} (scanned representative transcripts), \code{tss_all} (every
+  TSS), \code{promoters}, \code{promoter_overlap} and \code{meta}.
+  \code{result} has zero rows if no sites pass the threshold.
 }
 \description{
-Enumerates the gene's transcripts from Ensembl, fetches each distinct
-promoter window (Ensembl, with a UCSC fallback), and scans both strands for
-JASPAR and HOCOMOCO matches to \code{tf}. This is the slow (network) step;
-pass the result to \code{\link{plot_binding_sites}} to build figures.
+Enumerates the gene's transcripts from Ensembl, groups their TSSs into
+promoters, fetches each promoter window (Ensembl, with a UCSC fallback), and
+scans both strands for JASPAR and HOCOMOCO matches to \code{tf}. This is the
+slow (network) step; pass the result to \code{\link{plot_binding_sites}} or
+\code{\link{plot_promoter_map}} to build figures.
 }
 \details{
-Each hit also gets an analytic per-site p-value (from the PWM score under a
-promoter-derived, GC-aware background, via \pkg{TFMPvalue}) and a Bonferroni
-adjusted p-value over the positions tested. These are \code{NA} if
+Each hit gets a FIMO-style per-site p-value (PWM score under a
+promoter-derived, GC-aware background, via \pkg{TFMPvalue}) and a
+Benjamini-Hochberg q-value over all positions tested. Both are \code{NA} if
 \pkg{TFMPvalue} is not installed.
+
+Promoters: TSSs whose scan windows overlap by at least \code{max_overlap}
+(i.e. lie within \code{(1 - max_overlap) * window} bp) form one promoter,
+numbered P1, P2, ... 5' to 3'.
 }
 \examples{
 \dontrun{
 s <- scan_binding_sites("ATP7B", "MTF1")
 head(s$result)
+s$promoters
 }
 }

@@ -20,7 +20,16 @@ run_binding_site_analysis(
   color_seed = NULL,
   base_size = 12,
   point_size = 2.6,
-  top_n = 20
+  top_n = 20,
+  merge_dist = NULL,
+  scan_unit = c("tss", "promoter"),
+  max_overlap = 0.2,
+  chip = FALSE,
+  chip_threshold = "05",
+  chip_cell_pattern = NULL,
+  chip_max_mb = 300,
+  chip_ring_p = 0.001,
+  chip_ring_min_exp = 1
 )
 }
 \arguments{
@@ -38,7 +47,8 @@ run_binding_site_analysis(
 
 \item{transcripts}{\code{"protein_coding"} (default) or \code{"all"}.}
 
-\item{max_transcripts}{Cap on distinct TSS windows scanned (canonical always kept; default 8).}
+\item{max_transcripts}{Cap on TSS windows scanned (default 8). The canonical
+TSS is kept first, then one TSS per promoter.}
 
 \item{out_root}{Output directory root (default \code{"results"}).}
 
@@ -51,15 +61,41 @@ run_binding_site_analysis(
 
 \item{top_n}{Number of candidate regulators to return in discovery mode
 (used only when \code{tf} is \code{NULL}; see Details).}
+
+\item{merge_dist}{TSSs closer than this (bp) form one promoter. Default
+\code{NULL} = derived from \code{max_overlap} and the window.}
+
+\item{scan_unit}{\code{"tss"} (default; one window per distinct TSS) or
+\code{"promoter"} (one window per promoter).}
+
+\item{max_overlap}{Window overlap fraction at or above which TSSs belong to
+the same promoter (default 0.2).}
+
+\item{chip}{Add ChIP-Atlas evidence (default \code{FALSE}; needs internet on
+first use, files are cached).}
+
+\item{chip_threshold}{MACS2 q-value class of the peaks: \code{"05"},
+\code{"10"} or \code{"20"}.}
+
+\item{chip_cell_pattern}{Optional regular expression restricting ChIP
+experiments to cell types (e.g. \code{"HepG2|liver"}).}
+
+\item{chip_max_mb}{Skip ChIP-Atlas files larger than this (MB; default 300).}
+
+\item{chip_ring_p, chip_ring_min_exp}{Which in-peak sites get a black ring on
+the promoter map (see \code{\link{plot_promoter_map}}).}
 }
 \value{
 Invisibly, a list with \code{result} (data.frame), \code{plots}
-  (the ggplots, or \code{NULL} if no sites), and \code{meta}.
+  (the ggplots, or \code{NULL} if no sites), \code{meta}, \code{promoters},
+  \code{promoter_summary} and \code{chip}.
 }
 \description{
 Convenience wrapper: runs \code{\link{scan_binding_sites}} then
-\code{\link{plot_binding_sites}}, and (by default) writes a CSV and the
-score-based and significance PDF figures to \code{out_root/<GENE>_<TF>/}.
+\code{\link{plot_binding_sites}} and \code{\link{plot_promoter_map}}, and (by
+default) writes the site CSV, a per-promoter summary CSV and the PDF figures
+to \code{out_root/<GENE>_<TF>/}. With \code{chip = TRUE}, sites are annotated
+with ChIP-Atlas peaks of the same TF (\code{\link{add_chip_peaks}}).
 }
 \details{
 If \code{tf} is \code{NULL} or empty, the function switches to
@@ -69,6 +105,8 @@ If \code{tf} is \code{NULL} or empty, the function switches to
 \examples{
 \dontrun{
 run_binding_site_analysis("ATP7B", "MTF1", threshold_frac = 0.75)
+run_binding_site_analysis("TP73", "TP53", transcripts = "all",
+                          scan_unit = "promoter", chip = TRUE, chip_max_mb = 600)
 run_binding_site_analysis("SNCA")   # no TF -> discovery mode
 }
 }
