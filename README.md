@@ -15,8 +15,10 @@ from both databases, assigns each hit a statistical significance, and draws the
 results per transcript and on genomic coordinates. An interactive Shiny app is
 included.
 
-It reuses the [GLproxScape](https://github.com/scanozcan/GLproxScape) package's
-Ensembl / JASPAR / HOCOMOCO fetchers.
+Motifs come from **JASPAR 2026** and **HOCOMOCO v14** by default (older
+releases selectable). It reuses the
+[GLproxScape](https://github.com/scanozcan/GLproxScape) package's Ensembl
+fetchers.
 
 ---
 
@@ -36,8 +38,9 @@ install.packages("shiny")      # for the interactive app, launch_app()
 install.packages("TFMPvalue")  # for the significance (p-value) plots
 ```
 
-An **internet connection is required at run time** — Ensembl, JASPAR and
-HOCOMOCO are queried live (HOCOMOCO caches a bundle after the first use).
+An **internet connection is required at run time** — Ensembl is queried live.
+The JASPAR 2026 and HOCOMOCO v14 collections are downloaded once and cached
+(`tools::R_user_dir("proMotif", "cache")`), as are ChIP-Atlas files.
 
 ---
 
@@ -90,7 +93,8 @@ p$genomic                                     # show one plot
 | `threshold_frac` | `0.80` | PWM cutoff as a fraction of the matrix min–max score |
 | `transcripts` | `"protein_coding"` | or `"all"` (see *Alternative promoters* below) |
 | `max_transcripts` | `8` | cap on TSS windows scanned (canonical first, then one TSS per promoter) |
-| `hocomoco_version`, `hocomoco_species` | `"v12"`, `"human"` | HOCOMOCO bundle |
+| `jaspar_release` | `"2026"` | JASPAR release (CORE non-redundant; `"2024"`, `"2022"` also work) |
+| `hocomoco_version`, `hocomoco_species` | `"v14"`, `"human"` | HOCOMOCO release (`"v12"`/`"v11"` also work; v14 covers human and mouse in one collection) |
 | `out_root` | `"results"` | output folder |
 | `color_seed` | `NULL` | fix the two database colours reproducibly (NULL = fresh each run) |
 | `base_size`, `point_size` | `12`, `2.6` | plot font and marker size |
@@ -199,8 +203,20 @@ partly trained on public ChIP-seq, so agreement with HOCOMOCO is partly circular
 Call `run_binding_site_analysis()` (or `discover_regulators()`) **with no TF**
 and proMotif flips from "does TF X bind gene Y?" to "which TFs *could* regulate
 gene Y?". It scans the canonical promoter against the **whole JASPAR CORE
-collection** and ranks transcription factors by their single strongest match,
-scored with the **same FIMO per-site p-value** as confirm mode.
+collection** and ranks transcription factors by their single strongest match.
+
+**Ranking against a promoter background (default).** A raw per-site p-value
+favours long or GC-rich motifs that match well in almost *any* promoter. So by
+default each TF is ranked by how unusual this gene's best site is **compared with
+the best site of the same motif in 2,000 random human promoters** (Ensembl
+canonical TSS, same -2500/+500 window, hg38): `bg_pvalue` = P(a typical
+promoter's best site scores at least this high), read from that motif's
+empirical background distribution (an exponential tail is used only beyond the
+strongest background promoter), with BH `bg_qvalue`. `rank_by = "fimo"` restores the FIMO per-site
+p-value ranking. The background is precomputed for JASPAR 2026 and shipped with
+the package (`inst/extdata/`; built by `data-raw/make_promoter_background.py`);
+for other windows the background is shifted by extreme-value max-stability; for other
+species or releases discovery falls back to FIMO p.
 
 ```r
 run_binding_site_analysis("SNCA")            # no TF -> discovery
@@ -211,14 +227,18 @@ d <- discover_regulators("ATP7B")            # just the ranked table
 **Extra packages** (discovery only; install once):
 
 ```r
-install.packages(c("TFMPvalue", "RSQLite", "ggrepel"))
-BiocManager::install(c("TFBSTools", "JASPAR2024", "motifmatchr", "Biostrings"))
+install.packages(c("TFMPvalue", "ggrepel"))
+BiocManager::install(c("TFBSTools", "motifmatchr", "Biostrings"))  # optional, speed
 ```
 
-`TFMPvalue` (ranking metric) and a JASPAR data package (`JASPAR2024` + `RSQLite`)
-with `TFBSTools` are required; `motifmatchr` + `Biostrings` only pre-shortlist
-motifs for speed; `ggrepel` tidies the needle-map labels. All are `Suggests`, so
-the core (single-TF) workflow needs none of them.
+`TFMPvalue` (ranking metric) is required. The motif collection is JASPAR 2026
+CORE vertebrates (1,019 non-redundant matrices), downloaded once from
+jaspar.elixir.no and cached, so no JASPAR data package is needed.
+`motifmatchr` + `Biostrings` + `TFBSTools` only pre-shortlist motifs for speed;
+`ggrepel` tidies the needle-map labels. To use a Bioconductor JASPAR package
+instead (e.g. `JASPAR2024` + `RSQLite`), pass `jaspar_release = NULL` or a
+`jaspar_db`. All are `Suggests`, so the core (single-TF) workflow needs none of
+them.
 
 **Outputs** go to `results/<GENE>_regulators/`: a CSV (`*_candidate_regulators.csv`)
 and three PDFs — `*_regulators_ranking.pdf` (lollipop of top TFs by `-log10` p),
@@ -234,17 +254,16 @@ TFs share that site. **Nothing is dropped**: the CSV keeps every TF with a
 `site_group` id and an `is_representative` flag. TF family is only an
 annotation (colour), not a grouping key.
 
-**Important — read this as prioritisation, not proof.** Discovery is a
-motif-match ranking, **not** motif *enrichment* (there is no background set of
-sequences, unlike AME/HOMER/oPOSSUM) and **not** evidence of binding. A motif
-matches far more often than the factor actually binds; real occupancy depends on
-chromatin, concentration, cofactors and cell type. The ranking also favours
-longer, more informative motifs (a perfect long match is rarer by chance). Use
-it to decide **which TFs are worth following up**, and confirm with the single-TF
-mode plus orthogonal data (ChIP, accessibility).
+**Important — read this as prioritisation, not proof.** The promoter background
+answers "is this gene's best site unusually strong for this motif?", not "is the
+motif enriched across a gene set" (use AME/HOMER/Pscan for sets), and a motif
+match is **not** evidence of binding: real occupancy depends on chromatin,
+concentration, cofactors and cell type. Use it to decide **which TFs are worth
+following up**, and confirm with the single-TF mode plus orthogonal data
+(`chip = TRUE` for ChIP-Atlas, accessibility).
 
-Key arguments: `top_n` (how many to show), `collapse_site` / `site_window`
-(shared-site grouping), `upstream`/`downstream` (promoter window),
+Key arguments: `top_n` (how many to show), `rank_by` (`"background"` or
+`"fimo"`), `collapse_site` / `site_window` (shared-site grouping), `upstream`/`downstream` (promoter window),
 `tax_group` (e.g. `"vertebrates"`), `species`.
 
 ---
@@ -255,10 +274,21 @@ Key arguments: `top_n` (how many to show), `collapse_site` / `site_window`
 launch_app()
 ```
 
-Enter a gene and TF, adjust the promoter window / threshold, and click **Run
-scan**. The scan runs once; the text/point-size slider and the colour controls
-restyle the existing plots instantly (no re-scan). Tabs show the three score
-plots, the three significance plots, and a table you can download as CSV.
+Three modes:
+
+- **Gene + TF** — binding sites: promoter map, canonical / per-transcript /
+  genomic plots (score and significance), per-promoter summary, table + CSV.
+  Optional ChIP-Atlas evidence (peak track and black rings; the ring p cut-off
+  re-styles instantly).
+- **Discover regulators** — gene only: ranking, needle and map plots (promoter
+  background or FIMO ranking), optional ChIP-Atlas Target Genes plot, table.
+- **Compare promoters** — gene only: TFs specific to / shared between the gene's
+  promoters, promoter table.
+
+The analysis runs once per **Run**; the text/point-size slider and colour
+controls restyle the plots instantly. JASPAR / HOCOMOCO releases are selectable,
+and a **Log** tab shows the run's console messages (promoter structure, matrices
+used, downloads).
 
 ---
 
@@ -301,7 +331,7 @@ run_binding_site_analysis("ATP7B", "MTF1",
 # 3. A wider promoter window
 run_binding_site_analysis("TERT", "CTCF", upstream = 5000, downstream = 1000)
 
-# 4. A mouse gene (gene coordinates and the HOCOMOCO bundle switch to mouse)
+# 4. A mouse gene (mouse gene coordinates; HOCOMOCO v14 covers mouse TFs)
 run_binding_site_analysis("Ripk3", "Rela",
                           species = "mus_musculus", hocomoco_species = "mouse")
 

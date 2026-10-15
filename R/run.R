@@ -42,7 +42,8 @@ run_binding_site_analysis <- function(gene, tf = NULL,
                                       upstream         = 2500,
                                       downstream       = 500,
                                       threshold_frac   = 0.80,
-                                      hocomoco_version = "v12",
+                                      hocomoco_version = "v14",
+                                      jaspar_release   = "2026",
                                       hocomoco_species = "human",
                                       transcripts      = c("protein_coding", "all"),
                                       max_transcripts  = 8,
@@ -72,13 +73,13 @@ run_binding_site_analysis <- function(gene, tf = NULL,
              top_n = top_n, out_root = out_root, write_files = write_files,
              base_size = base_size, point_size = point_size,
              chip = chip, chip_cell_pattern = chip_cell_pattern,
-             chip_max_mb = chip_max_mb))
+             chip_max_mb = chip_max_mb, jaspar_release = jaspar_release))
   }
 
   scan <- scan_binding_sites(gene, tf, species, upstream, downstream, threshold_frac,
                              hocomoco_version, hocomoco_species, transcripts, max_transcripts,
                              merge_dist = merge_dist, scan_unit = scan_unit,
-                             max_overlap = max_overlap)
+                             max_overlap = max_overlap, jaspar_release = jaspar_release)
   out_dir  <- file.path(out_root, paste0(gene, "_", tf))
   csv_path <- file.path(out_dir, sprintf("%s_%s_binding_sites.csv", gene, tf))
 

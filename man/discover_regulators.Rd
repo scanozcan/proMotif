@@ -15,7 +15,9 @@ discover_regulators(
   collapse_site = TRUE,
   site_window = 20,
   use_motifmatchr = TRUE,
-  jaspar_db = NULL
+  jaspar_db = NULL,
+  jaspar_release = "2026",
+  rank_by = c("background", "fimo")
 )
 }
 \arguments{
@@ -40,6 +42,17 @@ installed (speed only; the ranking p-value is always the exact value).}
 
 \item{jaspar_db}{Optional pre-opened JASPAR database/connection to use
 instead of auto-detecting an installed JASPAR package.}
+
+\item{jaspar_release}{JASPAR release year downloaded from jaspar.elixir.no
+(default \code{"2026"}; cached). Ignored when \code{jaspar_db} is given; set
+\code{NULL} to use a Bioconductor JASPAR package instead.}
+
+\item{rank_by}{\code{"background"} (default): rank TFs by how unusual this
+gene's best site is compared with the best site of the same motif in 2,000
+random human promoters (empirical; column \code{bg_pvalue}). Removes the
+advantage of long or GC-rich motifs that match well in almost any promoter.
+Human and JASPAR 2026 only; otherwise falls back to \code{"fimo"} (the
+best site's FIMO per-site p-value).}
 }
 \value{
 A list with \code{result} (the full per-TF table: best-site position,

@@ -357,7 +357,8 @@ compare_promoter_regulators <- function(gene, species = "homo_sapiens",
                                         merge_dist = NULL, max_overlap = 0.2,
                                         present_p = 0.01, absent_p = 0.2,
                                         collection = "CORE", tax_group = "vertebrates",
-                                        use_motifmatchr = TRUE, jaspar_db = NULL) {
+                                        use_motifmatchr = TRUE, jaspar_db = NULL,
+                                jaspar_release = "2026") {
   transcripts <- match.arg(transcripts)
   message("== differential promoter regulators: ", gene, " ==")
   if (!requireNamespace("TFMPvalue", quietly = TRUE))
@@ -397,7 +398,7 @@ compare_promoter_regulators <- function(gene, species = "homo_sapiens",
                                  n_tx = rp$n_transcripts[i])
   }
   if (length(seqs) < 2) stop("Fewer than two promoter sequences could be fetched.")
-  pwms <- .jaspar_core_pwms(collection, tax_group, jaspar_db)
+  pwms <- .jaspar_core_pwms(collection, tax_group, jaspar_db, release = jaspar_release)
   n_motifs <- length(pwms)
 
   ## optional speed-up: keep motifs with a decent match (p < 5e-4) in ANY promoter

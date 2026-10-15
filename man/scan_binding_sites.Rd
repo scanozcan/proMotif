@@ -11,7 +11,8 @@ scan_binding_sites(
   upstream = 2500,
   downstream = 500,
   threshold_frac = 0.8,
-  hocomoco_version = "v12",
+  hocomoco_version = "v14",
+  jaspar_release = "2026",
   hocomoco_species = "human",
   transcripts = c("protein_coding", "all"),
   max_transcripts = 8,
@@ -31,7 +32,12 @@ scan_binding_sites(
 
 \item{threshold_frac}{PWM cutoff as a fraction of the matrix min-max score (default 0.80).}
 
-\item{hocomoco_version, hocomoco_species}{HOCOMOCO bundle (default \code{"v12"}/\code{"human"}).}
+\item{hocomoco_version, hocomoco_species}{HOCOMOCO release (\code{"v14"},
+default; \code{"v12"} or \code{"v11"} via GLproxScape) and species
+(v14 H14CORE covers human and mouse in one collection).}
+
+\item{jaspar_release}{JASPAR release year (default \code{"2026"}); the CORE
+non-redundant collection is downloaded once and cached.}
 
 \item{transcripts}{\code{"protein_coding"} (default) or \code{"all"}.}
 

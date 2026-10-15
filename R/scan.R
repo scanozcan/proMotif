@@ -20,7 +20,11 @@
 #' @param species Ensembl species token (default \code{"homo_sapiens"}).
 #' @param upstream,downstream Basepairs up/downstream of each TSS (default 2500/500).
 #' @param threshold_frac PWM cutoff as a fraction of the matrix min-max score (default 0.80).
-#' @param hocomoco_version,hocomoco_species HOCOMOCO bundle (default \code{"v12"}/\code{"human"}).
+#' @param hocomoco_version,hocomoco_species HOCOMOCO release (\code{"v14"},
+#'   default; \code{"v12"} or \code{"v11"} via GLproxScape) and species
+#'   (v14 H14CORE covers human and mouse in one collection).
+#' @param jaspar_release JASPAR release year (default \code{"2026"}); the CORE
+#'   non-redundant collection is downloaded once and cached.
 #' @param transcripts \code{"protein_coding"} (default) or \code{"all"}.
 #' @param max_transcripts Cap on TSS windows scanned (default 8). The canonical
 #'   TSS is kept first, then one TSS per promoter.
@@ -47,7 +51,8 @@ scan_binding_sites <- function(gene, tf,
                                upstream         = 2500,
                                downstream       = 500,
                                threshold_frac   = 0.80,
-                               hocomoco_version = "v12",
+                               hocomoco_version = "v14",
+                               jaspar_release   = "2026",
                                hocomoco_species = "human",
                                transcripts      = c("protein_coding", "all"),
                                max_transcripts  = 8,
@@ -112,10 +117,10 @@ scan_binding_sites <- function(gene, tf,
   prom <- .promoter_table(txdf, gene_strand, upstream, downstream, max_overlap)
   .report_promoters(prom$promoters, gene_chr, merge_dist, max_overlap, scan_unit)
 
+  message("  motif databases: JASPAR ", jaspar_release, " | HOCOMOCO ", hocomoco_version)
   pwms <- list(
-    JASPAR   = tryCatch(GLproxScape::fetch_jaspar_pwm(tf), error = function(e) NULL),
-    HOCOMOCO = tryCatch(GLproxScape::fetch_hocomoco_pwm(tf, version = hocomoco_version,
-                                           species = hocomoco_species),
+    JASPAR   = tryCatch(.jaspar_pwm(tf, jaspar_release), error = function(e) NULL),
+    HOCOMOCO = tryCatch(.hocomoco_pwm(tf, hocomoco_version, hocomoco_species),
                         error = function(e) NULL))
   for (nm in names(pwms))
     message("  ", nm, ": ",
@@ -185,6 +190,7 @@ scan_binding_sites <- function(gene, tf,
                    threshold_frac = threshold_frac, n_sites = nrow(result),
                    n_facets = nrow(reps), merge_dist = merge_dist,
                    scan_unit = scan_unit, max_overlap = max_overlap,
+                   jaspar_release = jaspar_release, hocomoco_version = hocomoco_version,
                    n_promoters = nrow(prom$promoters),
                    n_regions = length(unique(prom$promoters$region))))
 }

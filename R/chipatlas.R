@@ -310,7 +310,10 @@ add_chip_targets <- function(disc, distance = 1, cell_pattern = NULL, max_mb = 3
 plot_regulators_chip <- function(disc, base_size = 12, point_size = 3) {
   top <- disc$top; m <- disc$meta
   if (is.null(top) || !nrow(top) || !"chip_frac_exp" %in% names(top)) return(NULL)
-  top$neglogp    <- -log10(pmax(top$pvalue, 1e-300))
+  use_bg <- identical(m$rank_by, "background") && !is.null(top$bg_pvalue)
+  top$neglogp    <- -log10(pmax(if (use_bg) top$bg_pvalue else top$pvalue, 1e-300))
+  plab <- if (use_bg) "-log10 promoter-background p (best site)" else
+                      "-log10 FIMO per-site p (best site)"
   top$family_lab <- ifelse(is.na(top$family) | top$family == "", "unassigned", top$family)
   has <- top$chip_available %in% TRUE
   av <- top[has, , drop = FALSE]; na <- top[!has, , drop = FALSE]
@@ -320,7 +323,7 @@ plot_regulators_chip <- function(disc, base_size = 12, point_size = 3) {
           plot.title = element_text(size = rel(0.95)),
           plot.subtitle = element_text(size = rel(0.78)))
   cp  <- m$chip$cell_pattern
-  sub <- sprintf("x = motif evidence (best-site FIMO p, canonical promoter)\ny = share of the TF's ChIP-Atlas experiments with a peak within +/- %d kb of the TSS%s | crosses = no ChIP-Atlas data",
+  sub <- sprintf("x = motif evidence (best site, canonical promoter)\ny = share of the TF's ChIP-Atlas experiments with a peak within +/- %d kb of the TSS%s | crosses = no ChIP-Atlas data",
                  as.integer(m$chip$distance),
                  if (!is.null(cp)) paste0(" (cells ~ '", cp, "')") else "")
   p <- ggplot() + geom_hline(yintercept = 0, color = "grey80")
@@ -340,7 +343,7 @@ plot_regulators_chip <- function(disc, base_size = 12, point_size = 3) {
                          labels = function(x) paste0(round(100 * x), "%")) +
     coord_cartesian(ylim = c(-0.12, 1.02)) +
     scale_size_continuous(range = c(1.5, point_size * 2.5), name = "ChIP experiments") +
-    labs(x = "-log10 FIMO per-site p (best site)",
+    labs(x = plab,
          y = "Experiments with a peak at this promoter", color = "TF family",
          title = sprintf("Motif vs ChIP-Atlas evidence for %s's candidate regulators", m$gene),
          subtitle = sub) + base_theme

@@ -37,6 +37,15 @@
 #'   locus (default 20).
 #' @param use_motifmatchr Use \pkg{motifmatchr} to pre-shortlist motifs if it is
 #'   installed (speed only; the ranking p-value is always the exact value).
+#' @param jaspar_release JASPAR release year downloaded from jaspar.elixir.no
+#'   (default \code{"2026"}; cached). Ignored when \code{jaspar_db} is given; set
+#'   \code{NULL} to use a Bioconductor JASPAR package instead.
+#' @param rank_by \code{"background"} (default): rank TFs by how unusual this
+#'   gene's best site is compared with the best site of the same motif in 2,000
+#'   random human promoters (empirical; column \code{bg_pvalue}). Removes the
+#'   advantage of long or GC-rich motifs that match well in almost any promoter.
+#'   Human and JASPAR 2026 only; otherwise falls back to \code{"fimo"} (the
+#'   best site's FIMO per-site p-value).
 #' @param jaspar_db Optional pre-opened JASPAR database/connection to use
 #'   instead of auto-detecting an installed JASPAR package.
 #'
@@ -55,7 +64,10 @@ discover_regulators <- function(gene, species = "homo_sapiens",
                                 upstream = 2500, downstream = 500,
                                 collection = "CORE", tax_group = "vertebrates",
                                 top_n = 20, collapse_site = TRUE, site_window = 20,
-                                use_motifmatchr = TRUE, jaspar_db = NULL) {
+                                use_motifmatchr = TRUE, jaspar_db = NULL,
+                                jaspar_release = "2026",
+                                rank_by = c("background", "fimo")) {
+  rank_by <- match.arg(rank_by)
   message("== discovery: candidate regulators of ", gene, " ==")
   if (!requireNamespace("TFMPvalue", quietly = TRUE))
     stop("Discovery mode ranks by the FIMO p-value and needs TFMPvalue: ",
@@ -63,7 +75,7 @@ discover_regulators <- function(gene, species = "homo_sapiens",
   cp   <- .canonical_promoter(gene, species, upstream, downstream)
   seq  <- cp$pinfo$seq; tss_i <- cp$pinfo$tss_offset + 1
   bg   <- .seq_bg(seq)
-  pwms <- .jaspar_core_pwms(collection, tax_group, jaspar_db)
+  pwms <- .jaspar_core_pwms(collection, tax_group, jaspar_db, release = jaspar_release)
 
   ## Optional fast shortlist: which motifs have any match at p < 5e-4.
   keep_idx <- seq_along(pwms)
@@ -103,8 +115,24 @@ discover_regulators <- function(gene, species = "homo_sapiens",
   res <- do.call(rbind, rows)
   if (is.null(res) || !nrow(res)) stop("No motif matches found for ", gene, ".")
 
+  ## Promoter background: how unusual is this gene's best site for each motif,
+  ## compared with the best site of that motif in typical human promoters?
+  pbg <- if (rank_by == "background")
+    .promoter_background(jaspar_release, species, upstream, downstream,
+                         custom_db = !is.null(jaspar_db)) else NULL
+  if (!is.null(pbg)) {
+    i <- match(res$matrix_id, pbg$matrix_id)
+    res$bg_pvalue <- .bg_pvalue(res$score, pbg, i)
+    res$bg_zscore <- (res$score - pbg$mean[i]) / pbg$sd[i]
+  } else if (rank_by == "background") {
+    message("  -> ranking by FIMO per-site p instead.")
+    rank_by <- "fimo"
+  }
+  res$rank_p <- if (rank_by == "background")
+    ifelse(is.na(res$bg_pvalue), 1, res$bg_pvalue) else res$pvalue
+
   ## One row per TF name (best matrix), best-first.
-  res <- res[order(res$pvalue, -res$score_frac), ]
+  res <- res[order(res$rank_p, res$pvalue, -res$score_frac), ]
   res <- res[!duplicated(res$tf), ]
   res$n_at_site <- 1L
   res$shares_site_with <- ""
@@ -133,8 +161,12 @@ discover_regulators <- function(gene, species = "homo_sapiens",
   }
 
   res$qvalue <- .bh_qvalue(res$pvalue, n_tested)
-  res <- res[order(res$pvalue, -res$score_frac), ]
+  if (!is.null(res$bg_pvalue))
+    res$bg_qvalue <- stats::p.adjust(res$bg_pvalue, "BH",
+                                     n = max(length(pwms), sum(!is.na(res$bg_pvalue))))
+  res <- res[order(res$rank_p, res$pvalue, -res$score_frac), ]
   rownames(res) <- NULL
+  res$rank_p <- NULL
   top <- head(res[res$is_representative, , drop = FALSE], top_n)
 
   list(result = res, top = top,
@@ -142,7 +174,8 @@ discover_regulators <- function(gene, species = "homo_sapiens",
                    tss = cp$tss, transcript_id = cp$transcript_id,
                    upstream = upstream, downstream = downstream,
                    n_tested = n_tested, top_n = top_n, collection = collection,
-                   tax_group = tax_group))
+                   tax_group = tax_group, jaspar_release = jaspar_release,
+                   rank_by = rank_by))
 }
 
 #' Plots for discovery mode
@@ -167,7 +200,10 @@ discover_regulators <- function(gene, species = "homo_sapiens",
 plot_regulators <- function(disc, base_size = 12, point_size = 3) {
   top <- disc$top; m <- disc$meta
   if (is.null(top) || !nrow(top)) return(list(ranking = NULL, map = NULL, needle = NULL))
-  top$neglogp <- -log10(pmax(top$pvalue, 1e-300))
+  use_bg <- identical(m$rank_by, "background") && !is.null(top$bg_pvalue)
+  top$neglogp <- -log10(pmax(if (use_bg) top$bg_pvalue else top$pvalue, 1e-300))
+  plab <- if (use_bg) "-log10 promoter-background p (best site)" else
+                      "-log10 FIMO per-site p (best site)"
   nshare <- if (!is.null(top$n_at_site)) top$n_at_site else rep(1L, nrow(top))
   disp   <- ifelse(nshare > 1, sprintf("%s (+%d)", top$tf, nshare - 1L), as.character(top$tf))
   top$tf_disp <- factor(disp, levels = disp[order(top$neglogp)])
@@ -177,13 +213,14 @@ plot_regulators <- function(disc, base_size = 12, point_size = 3) {
     theme(panel.grid.minor = element_blank(),
           plot.title = element_text(size = rel(0.95)),
           plot.subtitle = element_text(size = rel(0.78)))
-  sub <- sprintf("canonical promoter -%d/+%d bp | %d motifs tested | FIMO per-site p | match-priority, not binding | (+N) = more TFs share that site",
-                 m$upstream, m$downstream, m$n_tested)
+  sub <- sprintf("canonical promoter -%d/+%d bp | %d motifs tested | %s | match-priority, not binding | (+N) = more TFs share that site",
+                 m$upstream, m$downstream, m$n_tested,
+                 if (use_bg) "ranked vs best sites in 2,000 human promoters" else "FIMO per-site p")
 
   ranking <- ggplot(top, aes(neglogp, tf_disp)) +
     geom_segment(aes(x = 0, xend = neglogp, yend = tf_disp), color = "grey70") +
     geom_point(aes(color = family_lab), size = point_size) +
-    labs(x = "-log10 FIMO per-site p (best site)", y = NULL, color = "TF family",
+    labs(x = plab, y = NULL, color = "TF family",
          title = sprintf("Top candidate regulators of %s", m$gene), subtitle = sub) +
     base_theme
 
@@ -201,7 +238,7 @@ plot_regulators <- function(disc, base_size = 12, point_size = 3) {
     geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
     geom_point(aes(color = family_lab, shape = strand), size = point_size) +
     scale_shape_manual(values = c("+" = 16, "-" = 17)) +
-    labs(x = "Position relative to TSS (bp)", y = "-log10 FIMO per-site p",
+    labs(x = "Position relative to TSS (bp)", y = sub(" \\(best site\\)", "", plab),
          color = "TF family", shape = "Motif strand",
          title = sprintf("Where %s's candidate regulators sit", m$gene),
          subtitle = sub) + base_theme

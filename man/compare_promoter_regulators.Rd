@@ -17,7 +17,8 @@ compare_promoter_regulators(
   collection = "CORE",
   tax_group = "vertebrates",
   use_motifmatchr = TRUE,
-  jaspar_db = NULL
+  jaspar_db = NULL,
+  jaspar_release = "2026"
 )
 }
 \arguments{
@@ -47,6 +48,9 @@ installed (speed only; the ranking p-value is always the exact value).}
 
 \item{jaspar_db}{Optional pre-opened JASPAR database/connection to use
 instead of auto-detecting an installed JASPAR package.}
+
+\item{jaspar_release}{JASPAR release year (default \code{"2026"}); the CORE
+non-redundant collection is downloaded once and cached.}
 }
 \value{
 A list with \code{comparison} (one row per TF), \code{long},

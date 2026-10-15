@@ -268,7 +268,21 @@ utils::globalVariables(c("position", "score_frac", "database", "strand",
 ## Fetch the JASPAR CORE motif collection as a list of pwm objects
 ## (pwm = log-odds matrix, len, id, name, family).
 .jaspar_core_pwms <- function(collection = "CORE", tax_group = "vertebrates",
-                              jaspar_db = NULL) {
+                              jaspar_db = NULL, release = "2026") {
+  ## Default: the JASPAR release file downloaded from jaspar.elixir.no (section 8 /
+  ## databases.R). The Bioconductor route below is used when jaspar_db is given,
+  ## release = NULL, or the download fails.
+  if (is.null(jaspar_db) && !is.null(release)) {
+    mot <- .jaspar_collection(release, collection, tax_group)
+    if (!is.null(mot)) {
+      message("  using motif database: JASPAR ", release, " ", collection, " ",
+              tax_group, " (", length(mot), " motifs)")
+      return(lapply(mot, function(x) list(pwm = .pfm_to_logodds(x$counts),
+                                          len = ncol(x$counts), id = x$id,
+                                          name = x$name, family = x$family)))
+    }
+    message("  JASPAR ", release, " download failed - falling back to a Bioconductor JASPAR package.")
+  }
   if (!requireNamespace("TFBSTools", quietly = TRUE))
     stop("Discovery mode needs TFBSTools: BiocManager::install('TFBSTools').")
   con <- NULL

@@ -3,3 +3,4 @@
 ^README\.Rmd$
 ^\.github$
 ^\.DS_Store$
+^data-raw$
