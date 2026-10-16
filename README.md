@@ -70,9 +70,11 @@ For most uses you only need the first function or the app.
 | `plot_binding_sites(scan, ...)` | Builds the plots from a `scan_binding_sites()` result (fast, local). |
 | `run_regulator_discovery(gene, ...)` | Discovery mode: rank a gene's candidate regulators against all of JASPAR CORE (see *Discovery mode*). |
 | `discover_regulators(gene, ...)` / `plot_regulators(disc)` | The discovery scan (data) and its plots. |
+| `expand_regulators(disc, n = 5, chip = TRUE)` | Targeted follow-up of the top discovery TFs: full single-TF scan of each (promoter map, ChIP-Atlas track and rings). |
 | `run_promoter_comparison(gene, ...)` | TFs that distinguish a gene's alternative promoters (see *Alternative promoters*). |
 | `plot_promoter_map(scan)` / `summarise_promoters(scan)` | Sites across all promoters of a gene, and a per-promoter summary. |
 | `add_chip_peaks(scan)` / `add_chip_targets(disc)` | Add ChIP-Atlas evidence (also via `chip = TRUE`, see *ChIP-Atlas evidence*). |
+| `add_promoter_usage(scan)` / `plot_promoter_usage(scan)` / `plot_promoter_usage_cancer(scan)` | Which promoter is used in which cell type, and normal vs cancer (FANTOM5 CAGE; also via `usage = TRUE`, see *Promoter usage*). |
 
 The last two let you scan once and re-plot many times (e.g. restyle without
 re-querying the databases):
@@ -110,6 +112,9 @@ p$genomic                                     # show one plot
 | `chip_ring_p` | `1e-3` | promoter map: ring in-peak sites with per-site p at or below this |
 | `chip_ring_min_exp` | `1` | promoter map: ring only sites supported by at least this many experiments |
 | `chip_distance` | `1` | discovery mode only (`run_regulator_discovery`): kb around the TSS (1, 5 or 10) |
+| **Promoter usage** (human) | | |
+| `usage` | `FALSE` | add FANTOM5 CAGE promoter usage across 608 sample types and the normal vs cancer plot |
+| `usage_flank` | `500` | CAGE peaks within this many bp of a promoter's TSSs count for that promoter |
 
 ---
 
@@ -198,17 +203,48 @@ partly trained on public ChIP-seq, so agreement with HOCOMOCO is partly circular
 
 ---
 
+## Promoter usage across cell types (FANTOM5 CAGE)
+
+Motifs say which TFs *could* bind each promoter; CAGE says which promoter is
+actually *used*, and where. With `usage = TRUE` (or `add_promoter_usage(scan)`),
+the FANTOM5 CAGE signal of peaks within `usage_flank` bp of each promoter's TSSs
+is summed in each of 608 sample types (primary cells, tissues, cell lines;
+donors averaged), giving each promoter's share of the gene's expression.
+
+```r
+options(promotif.fantom5_dir = "/path/to/fantom5_promoter_tpm_hg38")
+r <- run_binding_site_analysis("TP73", "TP53", transcripts = "all",
+                               scan_unit = "promoter", usage = TRUE)
+r$plots$usage          # sample types where each promoter is used most
+r$plots$usage_cancer   # every promoter, normal vs cancer, lineage-matched
+```
+
+- `plot_promoter_usage()` - per promoter, the sample types in which it carries
+  the largest share, plus the highest-expressing sample types (numbers = TPM).
+- `plot_promoter_usage_cancer()` - share of every promoter (and total TPM) in
+  normal samples (primary cells, tissues) vs cancer cell lines of the same
+  lineage (keyword-assigned: blood, brain, colon, ...), two-sided Wilcoxon.
+
+The FANTOM5 folder (~40 MB) is not shipped with the package; build it with
+`data-raw/fantom5/` and point `options(promotif.fantom5_dir = ...)` to it (or
+copy it to `tools::R_user_dir("proMotif", "data")`). Caveats: CAGE misses weak
+promoters ("not used" = below detection); FANTOM5 cancer samples are cell lines,
+not tumours, so culture adaptation is part of any difference.
+
 ## Discovery mode — "what regulates this gene?"
 
 Call `run_binding_site_analysis()` (or `discover_regulators()`) **with no TF**
 and proMotif flips from "does TF X bind gene Y?" to "which TFs *could* regulate
-gene Y?". It scans the canonical promoter against the **whole JASPAR CORE
-collection** and ranks transcription factors by their single strongest match.
+gene Y?". It scans **every promoter of the gene** (the same TSS groups as the
+single-TF mode; `promoters = "canonical"` for the canonical one only) against
+the **whole JASPAR CORE collection** and ranks transcription factors by their
+single strongest match, **separately for each promoter** (plots get one panel
+per promoter; `promoter_id` in the tables).
 
 **Ranking against a promoter background (default).** A raw per-site p-value
 favours long or GC-rich motifs that match well in almost *any* promoter. So by
 default each TF is ranked by how unusual this gene's best site is **compared with
-the best site of the same motif in 2,000 random human promoters** (Ensembl
+the best site of the same motif in all 20,094 human protein-coding promoters** (Ensembl
 canonical TSS, same -2500/+500 window, hg38): `bg_pvalue` = P(a typical
 promoter's best site scores at least this high), read from that motif's
 empirical background distribution (an exponential tail is used only beyond the
@@ -239,6 +275,12 @@ jaspar.elixir.no and cached, so no JASPAR data package is needed.
 instead (e.g. `JASPAR2024` + `RSQLite`), pass `jaspar_release = NULL` or a
 `jaspar_db`. All are `Suggests`, so the core (single-TF) workflow needs none of
 them.
+
+**Targeted follow-up of the top TFs.** `run_regulator_discovery()` then runs the
+single-TF scan for the top `expand_top` TFs (default 5; `0` = off) and writes,
+per TF, a site CSV, the promoter map (with the ChIP-Atlas coverage track and
+black rings when `chip = TRUE`) and the genomic significance plot to
+`results/<GENE>_regulators/top_TFs/<TF>/`. Interactively: `ex <- expand_regulators(d, n = 3, chip = TRUE); plot_promoter_map(ex[[1]])`.
 
 **Outputs** go to `results/<GENE>_regulators/`: a CSV (`*_candidate_regulators.csv`)
 and three PDFs — `*_regulators_ranking.pdf` (lollipop of top TFs by `-log10` p),

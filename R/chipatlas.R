@@ -175,8 +175,16 @@ add_chip_peaks <- function(scan, threshold = "05", cell_pattern = NULL, max_mb =
   message("  ChIP-Atlas: ", m$tf, " peaks (MACS2 q < 1e-", threshold, ")",
           if (!is.null(cell_pattern)) paste0(", cells matching '", cell_pattern, "'") else "",
           " ...")
-  ck <- fetch_chip_peaks(m$tf, m$chr, from, to, m$species, threshold, cell_pattern, max_mb)
-  if (is.null(ck)) return(scan)
+  ## heterodimers ("MAX::MYC"): peaks of both partners are combined
+  parts <- unique(trimws(strsplit(m$tf, "::", fixed = TRUE)[[1]]))
+  if (identical(m$species, "homo_sapiens")) parts <- toupper(parts)
+  if (length(parts) > 1)
+    message("  heterodimer: combining ChIP-Atlas peaks of ", paste(parts, collapse = " and "))
+  cks <- Filter(Negate(is.null), lapply(parts, function(tf1)
+    fetch_chip_peaks(tf1, m$chr, from, to, m$species, threshold, cell_pattern, max_mb)))
+  if (!length(cks)) return(scan)
+  ck <- list(peaks = do.call(rbind, lapply(cks, `[[`, "peaks")),
+             available = any(vapply(cks, `[[`, logical(1), "available")))
   pk <- ck$peaks; res <- scan$result
   if (nrow(res)) {
     hit <- lapply(res$genomic_position, function(g) which(pk$start < g & pk$end >= g))
@@ -314,6 +322,8 @@ plot_regulators_chip <- function(disc, base_size = 12, point_size = 3) {
   top$neglogp    <- -log10(pmax(if (use_bg) top$bg_pvalue else top$pvalue, 1e-300))
   plab <- if (use_bg) "-log10 promoter-background p (best site)" else
                       "-log10 FIMO per-site p (best site)"
+  top <- top[order(-top$neglogp), , drop = FALSE]       # one point per TF
+  top <- top[!duplicated(top$tf), , drop = FALSE]        # (best over promoters)
   top$family_lab <- ifelse(is.na(top$family) | top$family == "", "unassigned", top$family)
   has <- top$chip_available %in% TRUE
   av <- top[has, , drop = FALSE]; na <- top[!has, , drop = FALSE]
@@ -323,7 +333,7 @@ plot_regulators_chip <- function(disc, base_size = 12, point_size = 3) {
           plot.title = element_text(size = rel(0.95)),
           plot.subtitle = element_text(size = rel(0.78)))
   cp  <- m$chip$cell_pattern
-  sub <- sprintf("x = motif evidence (best site, canonical promoter)\ny = share of the TF's ChIP-Atlas experiments with a peak within +/- %d kb of the TSS%s | crosses = no ChIP-Atlas data",
+  sub <- sprintf("x = motif evidence (best site over the scanned promoters)\ny = share of the TF's ChIP-Atlas experiments with a peak within +/- %d kb of the TSS%s | crosses = no ChIP-Atlas data",
                  as.integer(m$chip$distance),
                  if (!is.null(cp)) paste0(" (cells ~ '", cp, "')") else "")
   p <- ggplot() + geom_hline(yintercept = 0, color = "grey80")

@@ -24,7 +24,9 @@ utils::globalVariables(c("position", "score_frac", "database", "strand",
                          "neglogq", "neglogp", "tf_disp", "family_lab",
                          "xmin", "xmax", "ymin", "ymax", "region", "lab", "lab_y",
                          "kind", "n", "l", "chip_frac_exp", "chip_n_exp",
-                         "status", "tf", "class"))
+                         "status", "tf", "class", "label", "panel",
+                         "frac", "promoter", "total", "lineage", "value",
+                         "condition"))
 
 ## ---- internal helpers ------------------------------------------------------
 

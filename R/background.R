@@ -5,14 +5,14 @@
 ## the best site of the same motif in typical human promoters - not by the raw
 ## per-site p-value, which favours long / GC-rich motifs that score well in
 ## almost any promoter.
-## Background (built once by data-raw/make_promoter_background.py): 2,000 random
+## Background (built once by data-raw/make_promoter_background.py): all 20,094
 ## human protein-coding genes (Ensembl canonical TSS, -2500/+500 bp, hg38); for
 ## every JASPAR 2026 CORE vertebrate matrix (converted exactly as in
 ## .pfm_to_logodds) the best-site score in each promoter. Stored per matrix as
 ## upper-tail quantiles q_p (P(best site >= q_p) = p, dense in the tail) plus an
 ## exponential tail (peaks over threshold) used only beyond the strongest
 ## background promoter. bg_pvalue = P(a typical promoter's best site >= this
-## gene's best site); its floor is ~1/2000 within the data, smaller only by the
+## gene's best site); its floor is ~1/20,000 within the data, smaller only by the
 ## tail extrapolation. For other window sizes all quantiles are shifted by
 ## beta * log(L / L0) (extreme-value max-stability, beta from the moments).
 ## Human / JASPAR 2026 only; otherwise discovery falls back to FIMO-p ranking.

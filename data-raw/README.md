@@ -13,12 +13,17 @@ Inputs:
 
 ```bash
 python3 make_promoter_background.py canon.tsv \
-  JASPAR2026_CORE_vertebrates_non-redundant_pfms_transfac.txt 2026
+  JASPAR2026_CORE_vertebrates_non-redundant_pfms_transfac.txt 2026 all
 ```
 
-2,000 genes are sampled (seed 1, chromosomes 1-22, X, Y); promoter sequences
+All 20,094 protein-coding genes on chromosomes 1-22, X, Y are used (pass a number
+instead of `all` to sample, seed 1); promoter sequences
 (-2500/+500 bp around the canonical TSS) come from the UCSC API (hg38). Every
 matrix is converted exactly as `proMotif:::.pfm_to_logodds()` and its best-site
 score (both strands) is recorded per promoter. Output: per matrix, upper-tail
 quantiles `q_p` (P(best site >= q_p) = p) plus an exponential tail scale for
-scores beyond the strongest background promoter. Runtime ~15 min (numpy).
+scores beyond the strongest background promoter. Scoring is resumable: each block of 500 promoters is saved to `chunks/`, finished
+blocks are skipped on restart, and `WORKER=i NWORK=k` runs blocks in parallel.
+Runtime ~1 h on 2 cores (numpy). Held-out check (2-fold): for motifs with
+continuous scores, 4.9% / 0.93% / 0.07% of promoters fall at p <= 0.05 / 0.01 /
+0.001; short motifs whose maximum score is common are conservative (ties).

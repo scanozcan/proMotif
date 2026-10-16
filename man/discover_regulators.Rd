@@ -48,8 +48,8 @@ instead of auto-detecting an installed JASPAR package.}
 \code{NULL} to use a Bioconductor JASPAR package instead.}
 
 \item{rank_by}{\code{"background"} (default): rank TFs by how unusual this
-gene's best site is compared with the best site of the same motif in 2,000
-random human promoters (empirical; column \code{bg_pvalue}). Removes the
+gene's best site is compared with the best site of the same motif in all
+20,094 human protein-coding promoters (empirical; column \code{bg_pvalue}). Removes the
 advantage of long or GC-rich motifs that match well in almost any promoter.
 Human and JASPAR 2026 only; otherwise falls back to \code{"fimo"} (the
 best site's FIMO per-site p-value).}

@@ -23,12 +23,16 @@
 #' @param chip_max_mb Skip ChIP-Atlas files larger than this (MB; default 300).
 #' @param chip_ring_p,chip_ring_min_exp Which in-peak sites get a black ring on
 #'   the promoter map (see \code{\link{plot_promoter_map}}).
+#' @param usage Add FANTOM5 CAGE promoter usage across cell types and the
+#'   normal vs cancer comparison (default \code{FALSE}; needs the FANTOM5
+#'   folder, see \code{\link{add_promoter_usage}}).
+#' @param usage_flank Window (bp) around each promoter's TSSs for CAGE peaks.
 #' @details If \code{tf} is \code{NULL} or empty, the function switches to
 #'   discovery mode and calls \code{\link{run_regulator_discovery}} to rank the
 #'   gene's candidate regulators instead of scanning one named TF.
 #' @return Invisibly, a list with \code{result} (data.frame), \code{plots}
 #'   (the ggplots, or \code{NULL} if no sites), \code{meta}, \code{promoters},
-#'   \code{promoter_summary} and \code{chip}.
+#'   \code{promoter_summary}, \code{chip} and \code{usage}.
 #' @examples
 #' \dontrun{
 #' run_binding_site_analysis("ATP7B", "MTF1", threshold_frac = 0.75)
@@ -61,7 +65,9 @@ run_binding_site_analysis <- function(gene, tf = NULL,
                                       chip_cell_pattern = NULL,
                                       chip_max_mb      = 300,
                                       chip_ring_p      = 1e-3,
-                                      chip_ring_min_exp = 1) {
+                                      chip_ring_min_exp = 1,
+                                      usage            = FALSE,
+                                      usage_flank      = 500) {
   transcripts <- match.arg(transcripts)
   scan_unit   <- match.arg(scan_unit)
 
@@ -73,7 +79,8 @@ run_binding_site_analysis <- function(gene, tf = NULL,
              top_n = top_n, out_root = out_root, write_files = write_files,
              base_size = base_size, point_size = point_size,
              chip = chip, chip_cell_pattern = chip_cell_pattern,
-             chip_max_mb = chip_max_mb, jaspar_release = jaspar_release))
+             chip_max_mb = chip_max_mb, jaspar_release = jaspar_release,
+             transcripts = transcripts, merge_dist = merge_dist, max_overlap = max_overlap))
   }
 
   scan <- scan_binding_sites(gene, tf, species, upstream, downstream, threshold_frac,
@@ -96,6 +103,7 @@ run_binding_site_analysis <- function(gene, tf = NULL,
   if (isTRUE(chip))
     scan <- add_chip_peaks(scan, threshold = chip_threshold,
                            cell_pattern = chip_cell_pattern, max_mb = chip_max_mb)
+  if (isTRUE(usage)) scan <- add_promoter_usage(scan, flank = usage_flank)
 
   plots <- plot_binding_sites(scan, base_size = base_size, point_size = point_size,
                               color_seed = color_seed)
@@ -103,6 +111,10 @@ run_binding_site_analysis <- function(gene, tf = NULL,
                                           point_size = point_size, color_seed = color_seed,
                                           chip_ring_p = chip_ring_p,
                                           chip_ring_min_exp = chip_ring_min_exp)
+  if (!is.null(scan$usage)) {
+    plots$usage        <- plot_promoter_usage(scan, base_size = base_size)
+    plots$usage_cancer <- plot_promoter_usage_cancer(scan, base_size = base_size)
+  }
   psum <- summarise_promoters(scan)
 
   if (write_files) {
@@ -136,9 +148,22 @@ run_binding_site_analysis <- function(gene, tf = NULL,
                                         if (with_chip) "_chip" else "")),
              plots$promoter_map, width = 11, height = if (with_chip) 7.5 else 6)
     }
+    if (!is.null(scan$usage)) {
+      write.csv(scan$usage$table, file.path(out_dir, sprintf("%s_%s_promoter_usage.csv", gene, tf)),
+                row.names = FALSE)
+      if (!is.null(plots$usage))
+        ggsave(file.path(out_dir, sprintf("%s_%s_promoter_usage.pdf", gene, tf)), plots$usage,
+               width = 11, height = max(5, 0.27 * length(unique(plots$usage$data$label)) + 2.2),
+               limitsize = FALSE)
+      if (!is.null(plots$usage_cancer))
+        ggsave(file.path(out_dir, sprintf("%s_%s_promoter_usage_normal_vs_cancer.pdf", gene, tf)),
+               plots$usage_cancer, width = 12,
+               height = 2.6 * length(unique(plots$usage_cancer$data$panel)) + 1.8)
+    }
     message("Wrote plots to: ", out_dir)
   }
   message("Done.")
   invisible(list(result = scan$result, plots = plots, meta = scan$meta,
-                 promoters = scan$promoters, promoter_summary = psum, chip = scan$chip))
+                 promoters = scan$promoters, promoter_summary = psum, chip = scan$chip,
+                 usage = scan$usage))
 }
