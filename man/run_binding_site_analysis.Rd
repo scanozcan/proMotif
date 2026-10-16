@@ -30,7 +30,9 @@ run_binding_site_analysis(
   chip_cell_pattern = NULL,
   chip_max_mb = 300,
   chip_ring_p = 0.001,
-  chip_ring_min_exp = 1
+  chip_ring_min_exp = 1,
+  usage = FALSE,
+  usage_flank = 500
 )
 }
 \arguments{
@@ -90,11 +92,17 @@ experiments to cell types (e.g. \code{"HepG2|liver"}).}
 
 \item{chip_ring_p, chip_ring_min_exp}{Which in-peak sites get a black ring on
 the promoter map (see \code{\link{plot_promoter_map}}).}
+
+\item{usage}{Add FANTOM5 CAGE promoter usage across cell types and the
+normal vs cancer comparison (default \code{FALSE}; needs the FANTOM5
+folder, see \code{\link{add_promoter_usage}}).}
+
+\item{usage_flank}{Window (bp) around each promoter's TSSs for CAGE peaks.}
 }
 \value{
 Invisibly, a list with \code{result} (data.frame), \code{plots}
   (the ggplots, or \code{NULL} if no sites), \code{meta}, \code{promoters},
-  \code{promoter_summary} and \code{chip}.
+  \code{promoter_summary}, \code{chip} and \code{usage}.
 }
 \description{
 Convenience wrapper: runs \code{\link{scan_binding_sites}} then

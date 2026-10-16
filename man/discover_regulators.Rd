@@ -17,7 +17,11 @@ discover_regulators(
   use_motifmatchr = TRUE,
   jaspar_db = NULL,
   jaspar_release = "2026",
-  rank_by = c("background", "fimo")
+  rank_by = c("background", "fimo"),
+  promoters = c("all", "canonical"),
+  transcripts = c("protein_coding", "all"),
+  merge_dist = NULL,
+  max_overlap = 0.2
 )
 }
 \arguments{
@@ -53,16 +57,29 @@ gene's best site is compared with the best site of the same motif in all
 advantage of long or GC-rich motifs that match well in almost any promoter.
 Human and JASPAR 2026 only; otherwise falls back to \code{"fimo"} (the
 best site's FIMO per-site p-value).}
+
+\item{promoters}{\code{"all"} (default; one ranking per promoter) or
+\code{"canonical"} (canonical promoter only).}
+
+\item{transcripts}{\code{"protein_coding"} (default) or \code{"all"}.}
+
+\item{merge_dist}{TSSs closer than this (bp) form one promoter. Default
+\code{NULL} = derived from \code{max_overlap} and the window.}
+
+\item{max_overlap}{Window overlap fraction at or above which TSSs belong to
+the same promoter (default 0.2).}
 }
 \value{
 A list with \code{result} (the full per-TF table: best-site position,
   strand, score, \code{score_frac}, \code{pvalue}, \code{qvalue},
   \code{genomic_position}, \code{family}, \code{site_group},
   \code{is_representative}, \code{n_at_site}, \code{shares_site_with}),
-  \code{top} (the \code{top_n} representatives) and \code{meta}.
+  \code{top} (the \code{top_n} representatives per promoter; column
+  \code{promoter_id}), \code{promoters} and \code{meta}.
 }
 \description{
-Scans the canonical promoter of \code{gene} against the whole JASPAR CORE
+Scans every promoter of \code{gene} (TSS groups, as in
+\code{\link{scan_binding_sites}}) against the whole JASPAR CORE
 motif collection and ranks transcription factors by their single strongest
 predicted site, scored with the same FIMO per-site p-value used by
 \code{\link{scan_binding_sites}}. TFs whose best site falls at the same locus

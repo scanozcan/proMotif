@@ -18,6 +18,10 @@ run_regulator_discovery(
   chip_distance = 1,
   chip_cell_pattern = NULL,
   chip_max_mb = 300,
+  expand_top = 5,
+  expand_threshold = 0.8,
+  expand_tfs = NULL,
+  expand_by = "auto",
   ...
 )
 }
@@ -45,6 +49,17 @@ run_regulator_discovery(
 experiments to cell types.}
 
 \item{chip_max_mb}{Skip ChIP-Atlas files larger than this (MB).}
+
+\item{expand_top}{Run the targeted scan (\code{\link{expand_regulators}})
+for this many top TFs and write their promoter maps (with ChIP-Atlas track
+and rings when \code{chip = TRUE}) to \code{top_TFs/} (default 5; 0 = off).}
+
+\item{expand_threshold}{PWM threshold for those targeted scans (default 0.80).}
+
+\item{expand_tfs}{Optional TFs to expand instead of the top ones.}
+
+\item{expand_by}{How to pick the top TFs: \code{"auto"}, \code{"rank"} or
+\code{"chip"} (see \code{\link{expand_regulators}}).}
 
 \item{...}{Passed to \code{\link{discover_regulators}}.}
 }
