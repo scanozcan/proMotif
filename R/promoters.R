@@ -263,7 +263,7 @@ plot_promoter_map <- function(scan, base_size = 12, point_size = 2.6,
             else coord_cartesian(xlim = xr)
   p <- p + scale_shape_manual(values = c("+" = 16, "-" = 17)) +
     scale_color_manual(values = db_cols, name = "Database") +
-    scale_fill_brewer(palette = "Set2", name = "Promoter") +
+    scale_fill_manual(values = .pal_promoters(64), name = "Promoter") +
     scale_linetype_manual(values = setNames(c("dashed", "dotted", "dotdash"), tss_kinds),
                           name = "TSS", drop = TRUE) +
     xscale + layout +

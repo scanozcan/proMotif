@@ -166,7 +166,7 @@ plot_promoter_usage <- function(scan, top_n = 10, base_size = 12) {
     geom_text(data = totals, aes(x = 1.02, y = label, label = sprintf("%.0f", total)),
               hjust = 0, size = base_size / 4.2, color = "grey30", inherit.aes = FALSE) +
     facet_grid(group ~ ., scales = "free_y", space = "free_y") +
-    scale_fill_brewer(palette = "Set2", labels = plab, name = "Promoter") +
+    scale_fill_manual(values = .pal_promoters(64), labels = plab, name = "Promoter") +
     scale_x_continuous(labels = function(x) paste0(round(100 * x), "%"),
                        breaks = c(0, .25, .5, .75, 1), limits = c(0, 1.12),
                        expand = c(0, 0)) +

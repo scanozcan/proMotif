@@ -25,6 +25,7 @@ Depends:
 Imports:
     GLproxScape,
     ggplot2,
+    grDevices,
     grid,
     httr,
     patchwork,

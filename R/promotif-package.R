@@ -33,6 +33,11 @@ utils::globalVariables(c("position", "score_frac", "database", "strand",
 `%||%` <- function(a, b) if (is.null(a) || length(a) == 0) b else a
 
 .fmt_bp <- function(x) format(round(x), big.mark = ",", scientific = FALSE, trim = TRUE)
+## promoter fill colours: ColorBrewer Set2 for the first 8, extended for genes with more promoters
+.pal_promoters <- function(n) {
+  base <- c("#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494", "#B3B3B3")
+  if (n <= 8) base[seq_len(n)] else c(base, grDevices::hcl.colors(n - 8, "Set 3"))
+}
 
 .palette_pool <- c(
   "#1B9E77","#D95F02","#7570B3","#E7298A","#66A61E","#E6AB02","#A6761D",

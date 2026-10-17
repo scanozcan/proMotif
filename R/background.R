@@ -57,8 +57,11 @@
   vapply(seq_along(score), function(k) {
     r <- i[k]
     if (is.na(r) || is.na(score[k])) return(NA_real_)
-    q <- Q[r, ]; s <- score[k]; last <- length(q)
-    if (s > q[last])                                  # beyond the data: exponential tail
+    ## quantiles are stored to 4 decimals: round the score the same way, or a
+    ## site at the motif's maximum score (common for short motifs) would fall
+    ## 'beyond' the data and get the extrapolated tail p instead of its real p
+    q <- Q[r, ]; s <- round(score[k], 4); last <- length(q)
+    if (s > q[last] + 1e-4)                           # beyond the data: exponential tail
       return(probs[last] * exp(-(s - q[last]) / bg$tail_sigma[r]))
     if (length(unique(q)) < 2) return(if (s <= q[1]) 1 else probs[last])
     stats::approx(q, probs, xout = s, ties = max, rule = 2)$y
