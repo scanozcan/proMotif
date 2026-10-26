@@ -62,9 +62,11 @@ ui <- fluidPage(
         conditionalPanel("input.chip",
           textInput("chip_cell", "Cell types (regex, optional)", "", placeholder = "HepG2|liver"),
           fluidRow(
-            column(6, numericInput("chip_max_mb", "Max file (MB)", 300, min = 10, step = 50)),
+            column(6, numericInput("chip_max_mb", "ChIP data budget (MB)", 300, min = 10, step = 50)),
             column(6, conditionalPanel("input.mode == 'discover'",
-              selectInput("chip_distance", "TSS +/- kb", c(1, 5, 10))))))),
+              selectInput("chip_distance", "TSS +/- kb", c(1, 5, 10))))),
+          helpText("If a TF's merged ChIP-Atlas file is larger than the budget, the newest",
+                   "experiments are used until the budget is reached (files are cached)."))),
       actionButton("run", "Run", class = "btn-primary", width = "100%"),
       tags$hr(),
       tags$b("Display (applies instantly, no re-run)"),
@@ -207,6 +209,16 @@ server <- function(input, output, session) {
     h  <- paste0(max(600, 240 * nf), "px")
     switch(mode,
       confirm = tabsetPanel(
+        tabPanel("Top sites",
+                 helpText("Hover a point to see the site, its exact genomic coordinates and sequence."),
+                 div(style = "position:relative",
+                     plotOutput("p_top", height = "620px",
+                                hover = hoverOpts("top_hover", delay = 80, delayType = "debounce")),
+                     uiOutput("top_hover_info")),
+                 fluidRow(column(4, numericInput("label_top", "Label the top N sites", 10, min = 0, step = 1)),
+                          column(4, br(), downloadButton("dl_top", "Download all ranked sites"))),
+                 tableOutput("tbl_top")),
+        tabPanel("Motif", plotOutput("p_logo", height = "560px")),
         tabPanel("Promoter map", plotOutput("p_promoter_map", height = "680px")),
         tabPanel("Promoter usage", plotOutput("p_usage", height = "800px"),
                  br(), tableOutput("tbl_usage")),
@@ -238,6 +250,69 @@ server <- function(input, output, session) {
                  tableOutput("tbl")),
         log_tab))
   })
+
+  ## ---- top sites: probability map without the ChIP track (one ggplot, so
+  ## hover coordinates map to the data); tooltip = site, coordinates, sequence
+  top_plot_rv <- reactive({
+    req(ok()); r <- run_rv(); req(r$mode == "confirm")
+    bs <- input$base_size
+    plot_top_sites(r$obj, top_n = input$label_top %||% 10, base_size = bs, point_size = bs / 4,
+                   color_seed = seed_rv(), chip_ring_p = as.numeric(input$ring_p),
+                   chip_track = FALSE)
+  })
+  output$p_top <- renderPlot(.need_plot(top_plot_rv()))
+  output$p_logo <- renderPlot({
+    r <- run_rv(); req(ok(), r$mode == "confirm")
+    .need_plot(plot_motif_logo(r$obj, base_size = input$base_size))
+  })
+  output$top_hover_info <- renderUI({
+    h <- input$top_hover; p <- top_plot_rv(); req(h, p)
+    pts <- attr(p, "points"); req(pts)
+    pv <- if (!is.null(h$mapping$panelvar1)) "panel" else NULL
+    near <- nearPoints(pts, h, xvar = "genomic_position", yvar = "y", panelvar1 = pv,
+                       threshold = 8, maxpoints = 1)
+    if (!nrow(near)) return(NULL)
+    s <- near[1, ]
+    num <- function(x, f = "%.3g") if (is.null(x) || is.na(x)) "NA" else sprintf(f, x)
+    sid <- ""
+    st <- run_rv()$obj$sites
+    if (!is.null(st)) {
+      k <- which(st$genomic_start == s$genomic_start & st$genomic_end == s$genomic_end &
+                 st$motif_strand_genomic == s$motif_strand_genomic)
+      if (length(k)) sid <- paste0(st$site_id[k[1]], " &middot; ")
+    }
+    html <- paste0(
+      "<b>", sid, s$database, " ", s$matrix_id, "</b><br>",
+      sprintf("chr%s:%s-%s (%s strand)", sub("^chr", "", run_rv()$obj$meta$chr),
+              format(s$genomic_start, big.mark = ","), format(s$genomic_end, big.mark = ","),
+              s$motif_strand_genomic), "<br>",
+      "motif: <span style='font-family:monospace'>", s$site_motif, "</span><br>",
+      "genome (+): <span style='font-family:monospace'>", s$context_genomic, "</span><br>",
+      sprintf("%s bp from the %s TSS (%s) | p = %s, q = %s", s$position, s$promoter_id,
+              s$transcript_id, num(s$pvalue), num(s$qvalue)), "<br>",
+      if (!is.null(s$chip_n_exp)) sprintf("ChIP: %s experiment(s), support %s, summit %s bp away<br>",
+                                          s$chip_n_exp, num(s$chip_support, "%.2f"),
+                                          num(s$chip_summit_dist, "%.0f")) else "",
+      sprintf("<b>binding probability %s</b> (%s)", num(s$binding_prob, "%.2f"), s$confidence))
+    left <- h$coords_css$x + 14; top <- h$coords_css$y + 14
+    div(style = sprintf(paste0("position:absolute; left:%dpx; top:%dpx; z-index:100;",
+                               "background:rgba(255,255,255,0.96); border:1px solid #bbb;",
+                               "border-radius:4px; padding:6px 9px; font-size:12px;",
+                               "pointer-events:none; max-width:460px;"), round(left), round(top)),
+        HTML(html))
+  })
+  output$tbl_top <- renderTable({
+    r <- run_rv(); req(ok(), r$mode == "confirm")
+    t <- top_binding_sites(r$obj, min_n = max(10, input$label_top %||% 10))
+    req(t)
+    t[, intersect(c("site_id", "chrom", "genomic_start", "genomic_end", "motif_strand_genomic",
+                    "promoter_id", "position_rel_tss", "databases", "site_motif", "context_genomic",
+                    "pvalue", "qvalue", "chip_n_exp", "chip_support", "binding_prob", "confidence"),
+                  names(t)), drop = FALSE]
+  }, digits = 3)
+  output$dl_top <- downloadHandler(
+    filename = function() { m <- run_rv()$obj$meta; sprintf("%s_%s_top_sites.csv", m$gene, m$tf) },
+    content = function(file) utils::write.csv(run_rv()$obj$sites, file, row.names = FALSE))
 
   .sig_need <- "Significance plots need the 'TFMPvalue' package: install.packages('TFMPvalue')."
   output$p_promoter_map  <- renderPlot(.need_plot(plots_rv()$promoter_map))
@@ -301,7 +376,8 @@ server <- function(input, output, session) {
     keep <- switch(r$mode,
       confirm = c("promoter_id", "transcript_id", "is_canonical", "database", "matrix_id",
                   "position", "strand", "score_frac", "pvalue", "qvalue",
-                  "genomic_position", "site", "chip_n_exp", "chip_cell_types"),
+                  "genomic_start", "genomic_end", "site_motif", "chip_n_exp", "chip_support",
+                  "binding_prob", "confidence", "chip_cell_types"),
       discover = c("promoter_id", "tf", "family", "matrix_id", "position", "strand", "score_frac",
                    "pvalue", "bg_pvalue", "bg_qvalue", "n_at_site", "shares_site_with",
                    "chip_n_exp", "chip_frac_exp"),

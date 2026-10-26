@@ -12,13 +12,16 @@
 #'
 #' @keywords internal
 #' @import ggplot2
-#' @importFrom stats embed setNames
+#' @importFrom stats embed setNames ave
 #' @importFrom utils write.csv head
 "_PACKAGE"
 
 ## ggplot2 aesthetics reference data-frame columns by bare name; declare them
 ## so R CMD check does not flag "no visible binding for global variable".
-utils::globalVariables(c("position", "score_frac", "database", "strand",
+utils::globalVariables(c("base", "biotype", "canonical", "end", "grp", "hj", "ly",
+                         "promoter_id", "psize", "ring_type", "start", "summit", "tpm",
+                         "transcript_id", "tss_max", "tss_min",
+                         "position", "score_frac", "database", "strand",
                          "genomic_position", "is_canonical", "tss",
                          "transcript_label", "x", "xend", "y", "yend",
                          "neglogq", "neglogp", "tf_disp", "family_lab",
@@ -59,7 +62,7 @@ utils::globalVariables(c("position", "score_frac", "database", "strand",
 }
 
 ## Scan one promoter window for one PWM; returns a data.frame of TSS-relative hits.
-.scan_promoter <- function(promoter_info, pwm_obj, threshold_frac) {
+.scan_promoter <- function(promoter_info, pwm_obj, threshold_frac, flank = 10L) {
   if (is.null(pwm_obj)) return(NULL)
   pwm <- pwm_obj$pwm; L <- pwm_obj$len
   seq <- promoter_info$seq; tss_i <- promoter_info$tss_offset + 1
@@ -78,33 +81,55 @@ utils::globalVariables(c("position", "score_frac", "database", "strand",
     if (length(ri)) data.frame(start = rev_start, strand = "-", score = rev_scores[ri])
   )
   if (is.null(hits) || nrow(hits) == 0)
-    return(data.frame(position = integer(0), strand = character(0),
-                      score = numeric(0), score_frac = numeric(0), site = character(0)))
+    return(data.frame(position=integer(0), strand=character(0),
+                      score=numeric(0), score_frac=numeric(0), site=character(0),
+                      context=character(0)))
   hits <- hits[order(hits$start, -hits$score), ]
   hits <- hits[!duplicated(hits$start), ]
   hits$position   <- hits$start - tss_i
   hits$score_frac <- (hits$score - min_score) / (max_score - min_score)
   hits$site       <- substring(seq, hits$start, hits$start + L - 1)
+  ## site with `flank` bp on each side (flanks in lower case), gene orientation
+  hits$context    <- paste0(tolower(substring(seq, pmax(1, hits$start - flank), hits$start - 1)),
+                            hits$site,
+                            tolower(substring(seq, hits$start + L, pmin(n, hits$start + L - 1 + flank))))
   hits <- hits[order(hits$position), ]; rownames(hits) <- NULL
-  hits[, c("position", "strand", "score", "score_frac", "site")]
+  hits[, c("position", "strand", "score", "score_frac", "site", "context")]
 }
 
 ## Ensembl symbol lookup (expanded with transcripts). Reuses GLproxScape's
 ## ensembl_get when available; else a direct REST call.
 .ensembl_lookup_expand <- function(gene, species) {
+  key <- paste("lookup", species, gene, sep = "|")
+  if (!is.null(.f5_env[[key]])) return(.f5_env[[key]])
+  fc <- .seq_cache_file("ensembl_lookup", species, gene)
+  js <- .cache_read(fc)
+  if (!is.null(js)) { .f5_env[[key]] <- js; return(js) }
   path <- paste0("/lookup/symbol/", species, "/", gene)
   ns <- asNamespace("GLproxScape")
-  if (exists("ensembl_get", envir = ns, inherits = FALSE)) {
+  if (exists("ensembl_get", envir = ns, inherits = FALSE))
     js <- tryCatch(get("ensembl_get", envir = ns)(
       path, params = list(expand = 1, `content-type` = "application/json")),
       error = function(e) NULL)
-    if (!is.null(js)) return(js)
+  if (is.null(js)) {
+    for (k in 1:5) {
+      res <- tryCatch(httr::GET(paste0("https://rest.ensembl.org", path),
+                                query = list(expand = 1), httr::accept_json(), httr::timeout(30)),
+                      error = function(e) NULL)
+      sc <- if (is.null(res)) 0L else httr::status_code(res)
+      if (sc == 200) { js <- httr::content(res, as = "parsed", type = "application/json"); break }
+      if (sc %in% c(400L, 404L)) break                      # unknown symbol: no point retrying
+      wait <- if (is.null(res)) NA else
+        suppressWarnings(as.numeric(httr::headers(res)[["retry-after"]] %||% NA))
+      wait <- if (is.na(wait)) 3 * k else wait + 1
+      message("  Ensembl lookup for ", gene, ": HTTP ", sc, ", retry ", k, "/4 in ", wait, " s")
+      if (k < 5) Sys.sleep(wait)
+    }
   }
-  res <- httr::GET(paste0("https://rest.ensembl.org", path),
-                   query = list(expand = 1), httr::accept_json(), httr::timeout(25))
-  if (httr::status_code(res) != 200)
-    stop("Ensembl lookup failed for ", gene, " (", species, ")")
-  httr::content(res, as = "parsed", type = "application/json")
+  if (is.null(js)) stop("Ensembl lookup failed for ", gene, " (", species, ")")
+  saveRDS(js, fc)
+  .f5_env[[key]] <- js
+  js
 }
 
 ## Ensembl current-assembly -> UCSC genome name (for the sequence fallback).
@@ -261,12 +286,7 @@ utils::globalVariables(c("position", "score_frac", "database", "strand",
   gene_info <- list(name = gene, chr = gene_chr, strand = gene_strand,
                     tss = rp$tss, start = rp$start, end = rp$end,
                     species = species, transcript_id = rp$transcript_id)
-  pinfo <- .with_retry(
-    function() GLproxScape::fetch_promoter_seq(gene_info, upstream = upstream,
-                                               downstream = downstream),
-    tries = 2, waits = c(3, 8), what = paste("Ensembl seq", rp$transcript_id))
-  if (is.null(pinfo))
-    pinfo <- .fetch_seq_ucsc(gene_chr, rp$tss, gene_strand, upstream, downstream, species)
+  pinfo <- .promoter_seq(gene_info, upstream, downstream, species)
   if (is.null(pinfo)) stop("Could not fetch canonical promoter for ", gene, ".")
   list(pinfo = pinfo, chr = gene_chr, strand = gene_strand,
        tss = rp$tss, transcript_id = rp$transcript_id)
@@ -324,4 +344,46 @@ utils::globalVariables(c("position", "score_frac", "database", "strand",
     list(pwm = .pfm_to_logodds(cm), len = ncol(cm),
          id = TFBSTools::ID(pf), name = TFBSTools::name(pf), family = fam)
   })
+}
+
+## Reverse complement (keeps case; N stays N).
+.revcomp <- function(x) {
+  vapply(x, function(s) paste(rev(strsplit(chartr("ACGTacgtNn", "TGCAtgcaNn", s), "")[[1]]),
+                              collapse = ""), "", USE.NAMES = FALSE)
+}
+
+## ---- sequence cache ---------------------------------------------------------
+## Promoter sequences and Ensembl gene lookups are saved on disk the first time
+## (tools::R_user_dir("proMotif", "cache")), so repeated analyses do not fetch
+## them again. options(promotif.refresh_cache = TRUE) re-fetches and overwrites.
+.seq_cache_file <- function(kind, ...) {
+  d <- file.path(tools::R_user_dir("proMotif", "cache"), kind)
+  dir.create(d, recursive = TRUE, showWarnings = FALSE)
+  file.path(d, paste0(gsub("[^A-Za-z0-9_.-]", "_", paste(..., sep = "_")), ".rds"))
+}
+
+.cache_read <- function(f) {
+  if (isTRUE(getOption("promotif.refresh_cache")) || !file.exists(f)) return(NULL)
+  tryCatch(readRDS(f), error = function(e) NULL)
+}
+
+## Promoter sequence for one TSS window: disk cache -> Ensembl (unless
+## ensembl = FALSE, e.g. EPDnew TSSs) -> UCSC. Returns NULL if all fail.
+.promoter_seq <- function(gene_info, upstream, downstream, species, ensembl = TRUE,
+                          label = gene_info$transcript_id %||% "") {
+  f <- .seq_cache_file("promoter_seqs", species, gene_info$chr, gene_info$tss,
+                       gene_info$strand, upstream, downstream)
+  pinfo <- .cache_read(f)
+  if (!is.null(pinfo)) return(pinfo)
+  if (ensembl)
+    pinfo <- .with_retry(function() GLproxScape::fetch_promoter_seq(gene_info, upstream = upstream,
+                                                       downstream = downstream),
+                         tries = 2, waits = c(3, 8), what = paste("Ensembl seq", label))
+  if (is.null(pinfo)) {
+    pinfo <- .fetch_seq_ucsc(gene_info$chr, gene_info$tss, gene_info$strand,
+                             upstream, downstream, species)
+    if (!is.null(pinfo) && ensembl) message("  used UCSC fallback for ", label)
+  }
+  if (!is.null(pinfo) && nchar(pinfo$seq %||% "") > 10) saveRDS(pinfo, f)
+  pinfo
 }

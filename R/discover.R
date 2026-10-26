@@ -53,6 +53,7 @@
 #' @param jaspar_db Optional pre-opened JASPAR database/connection to use
 #'   instead of auto-detecting an installed JASPAR package.
 #'
+#' @param tss_source `"ensembl"` (default) or `"epd"` (EPDnew mapped TSSs).
 #' @return A list with \code{result} (the full per-TF table: best-site position,
 #'   strand, score, \code{score_frac}, \code{pvalue}, \code{qvalue},
 #'   \code{genomic_position}, \code{family}, \code{site_group},
@@ -74,16 +75,17 @@ discover_regulators <- function(gene, species = "homo_sapiens",
                                 rank_by = c("background", "fimo"),
                                 promoters = c("all", "canonical"),
                                 transcripts = c("protein_coding", "all"),
-                                merge_dist = NULL, max_overlap = 0.2) {
+                                merge_dist = NULL, max_overlap = 0.2,
+                                tss_source = c("ensembl", "epd")) {
   rank_by <- match.arg(rank_by); promoters <- match.arg(promoters)
-  transcripts <- match.arg(transcripts)
+  transcripts <- match.arg(transcripts); tss_source <- match.arg(tss_source)
   message("== discovery: candidate regulators of ", gene, " ==")
   if (!requireNamespace("TFMPvalue", quietly = TRUE))
     stop("Discovery mode needs TFMPvalue: install.packages('TFMPvalue').")
 
   ## the gene's promoters (TSS groups, as in confirm mode); one window each,
   ## representative TSS = canonical, else the TSS used by most transcripts
-  gt <- .gene_transcripts(gene, species, transcripts)
+  gt <- .gene_transcripts(gene, species, transcripts, tss_source)
   merge_dist <- merge_dist %||% round((1 - max_overlap) * (upstream + downstream + 1))
   txdf <- .cluster_tss(gt$txdf, gt$strand, merge_dist)
   prom <- .promoter_table(txdf, gt$strand, upstream, downstream, max_overlap)$promoters
@@ -108,14 +110,8 @@ discover_regulators <- function(gene, species = "homo_sapiens",
     gene_info <- list(name = gene, chr = gt$chr, strand = gt$strand, tss = pr$tss,
                       start = tx$start, end = tx$end, species = species,
                       transcript_id = tx$transcript_id)
-    pinfo <- .with_retry(
-      function() GLproxScape::fetch_promoter_seq(gene_info, upstream = upstream, downstream = downstream),
-      tries = 2, waits = c(3, 8), what = paste("Ensembl seq", tx$transcript_id))
-    if (is.null(pinfo)) {
-      message("  falling back to UCSC for ", pr$promoter_id, " ...")
-      pinfo <- .fetch_seq_ucsc(gt$chr, pr$tss, gt$strand, upstream, downstream, species)
-      if (!is.null(pinfo)) message("  Got ", nchar(pinfo$seq), " bp (UCSC)")
-    }
+    pinfo <- .promoter_seq(gene_info, upstream, downstream, species,
+                           ensembl = gt$source != "epd", label = pr$promoter_id)
     if (is.null(pinfo)) { message("  could not fetch ", pr$promoter_id, " - skipped."); next }
     if (nrow(prom_scan) > 1)
       message("  scanning ", pr$promoter_id, if (pr$has_canonical) " (canonical)" else "",
@@ -143,7 +139,8 @@ discover_regulators <- function(gene, species = "homo_sapiens",
                    n_tested = max(n_tested), n_tested_by_promoter = n_tested,
                    top_n = top_n, collection = collection, tax_group = tax_group,
                    jaspar_release = jaspar_release, rank_by = rank_by,
-                   transcripts = transcripts, n_promoters = length(res_all),
+                   transcripts = transcripts, tss_source = gt$source,
+                   n_promoters = length(res_all),
                    bg_n = if (!is.null(pbg)) pbg$n_bg[1] else NA_integer_,
                    promoters_scanned = names(res_all)))
 }
@@ -298,6 +295,7 @@ expand_regulators <- function(disc, tfs = NULL, n = 5, by = c("auto", "rank", "c
                          downstream = m$downstream, threshold_frac = threshold_frac,
                          hocomoco_version = hocomoco_version,
                          transcripts = m$transcripts %||% "protein_coding",
+                         tss_source = m$tss_source %||% "ensembl",
                          scan_unit = scan_unit, jaspar_release = m$jaspar_release, ...),
       error = function(e) { message("  ", tf, ": ", conditionMessage(e)); NULL })
     if (is.null(s)) next
@@ -491,7 +489,8 @@ run_regulator_discovery <- function(gene, species = "homo_sapiens",
     if (!is.null(plots$chip))
       ggsave(file.path(out_dir, sprintf("%s_regulators_chip.pdf", gene)),
              plots$chip, width = 10, height = 6.5)
-    ## targeted scans of the top TFs: one folder each
+    ## targeted scans of the top TFs: one folder each, same colours in all of them
+    seed1 <- sample.int(1e6, 1)
     for (tf in names(expanded)) {
       s <- expanded[[tf]]
       if (is.null(s) || !nrow(s$result)) {
@@ -503,13 +502,10 @@ run_regulator_discovery <- function(gene, species = "homo_sapiens",
       stem <- file.path(d, sprintf("%s_%s", gene, gsub("[^A-Za-z0-9_.-]+", "-", tf)))
       write.csv(s$result, paste0(stem, "_binding_sites.csv"), row.names = FALSE)
       with_chip <- !is.null(s$chip) && nrow(s$chip$peaks) > 0
-      pm <- plot_promoter_map(s, base_size = base_size)
+      pm <- plot_promoter_map(s, base_size = base_size, color_seed = seed1)
       if (!is.null(pm))
         ggsave(paste0(stem, if (with_chip) "_promoter_map_chip.pdf" else "_promoter_map.pdf"),
                pm, width = 11, height = if (with_chip) 7.5 else 6)
-      pb <- plot_binding_sites(s, base_size = base_size)
-      if (!is.null(pb$genomic_sig))
-        ggsave(paste0(stem, "_genomic_significance.pdf"), pb$genomic_sig, width = 10, height = 5)
     }
     message("Wrote plots to: ", out_dir,
             if (length(expanded)) sprintf(" (+ top_TFs/ for %d TF(s))", length(expanded)) else "")

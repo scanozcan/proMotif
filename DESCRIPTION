@@ -1,22 +1,23 @@
 Package: proMotif
 Type: Package
-Title: Promoter Transcription-Factor Binding-Site Scanner
+Title: Promoter-Resolved Transcription-Factor Binding-Site Analysis
 Version: 0.1.0
 Authors@R: person("Can", "Ozcan", email = "s.canozcan89@gmail.com",
                   role = c("aut", "cre"))
-Description: Scan a gene's promoter for transcription-factor binding sites using
-    JASPAR and HOCOMOCO position weight matrices. For a gene symbol and a TF,
-    it enumerates the gene's transcripts from Ensembl, fetches each promoter
-    window (with a UCSC fallback when Ensembl is unavailable), scans both
-    strands, and reports predicted sites in TSS-relative and absolute genomic
-    coordinates with per-transcript and genomic plots. Transcription start
-    sites are grouped into promoters, and a gene's alternative promoters can be
-    compared for TFs that distinguish them. Predicted sites and candidate
-    regulators can be checked against public ChIP-seq peaks from ChIP-Atlas.
-    A discovery mode (no TF given) ranks a gene's candidate regulators against
-    the whole JASPAR CORE collection using the FIMO per-site p-value. Includes
-    a Shiny app. Reuses the
-    GLproxScape package's Ensembl/JASPAR/HOCOMOCO fetchers and motif-scan
+Description: Find and rank transcription-factor binding sites in the promoters
+    of a gene using JASPAR and HOCOMOCO position weight matrices. For a gene
+    symbol and a TF, it retrieves the gene's transcription start sites from
+    Ensembl or EPDnew, groups them into promoters, scans each promoter window on
+    both strands, and reports every predicted site with its exact genomic
+    coordinates, sequence and per-site p-value. Sites are ranked by a binding
+    probability that combines motif strength, agreement between the two motif
+    databases and public ChIP-seq evidence from ChIP-Atlas (summit proximity
+    and the number of supporting experiments), with ChIP-Atlas downloads limited
+    to a user-defined data budget. A discovery mode ranks a gene's candidate
+    regulators against a genome-wide promoter background, alternative promoters
+    can be compared for the TFs that distinguish them, and FANTOM5 CAGE data
+    show which promoter is used in which cell type. Includes a Shiny app.
+    Reuses the GLproxScape package's Ensembl fetchers and motif-scan
     conventions.
 License: MIT + file LICENSE
 Encoding: UTF-8
@@ -34,6 +35,7 @@ Imports:
     utils
 Suggests:
     shiny,
+    curl,
     TFMPvalue,
     TFBSTools,
     JASPAR2024,

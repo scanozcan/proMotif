@@ -150,22 +150,36 @@ summarise_promoters <- function(scan) {
 #'   ChIP experiments (default 1).
 #' @param facet_regions One panel per promoter when there are several
 #'   (default \code{TRUE}); \code{FALSE} draws one continuous axis.
+#' @param y_metric `"p"` (-log10 per-site p, default) or `"probability"` (binding probability).
+#' @param label_top Number of top sites to label with ggrepel (default 0; used with `y_metric = "probability"`).
+#' @param chip_track Draw the ChIP-Atlas coverage panel under the map (default `TRUE`).
 #' @return A ggplot (or patchwork) object, or \code{NULL} if there are no sites.
 #' @export
 plot_promoter_map <- function(scan, base_size = 12, point_size = 2.6,
                               color_seed = NULL, chip_ring_p = 1e-3,
-                              chip_ring_min_exp = 1, facet_regions = TRUE) {
+                              chip_ring_min_exp = 1, facet_regions = TRUE,
+                              y_metric = c("p", "probability"), label_top = 0,
+                              chip_track = TRUE) {
+  y_metric <- match.arg(y_metric)
   res <- scan$result; prom <- scan$promoters; m <- scan$meta
   if (is.null(prom) || is.null(res) || !nrow(res)) return(NULL)
+  ## one point per distinct site; the same site re-found in several TSS windows
+  ## has slightly different q-values (window-specific), keep its best copy
+  if ("binding_prob" %in% names(res)) res <- res[order(-res$binding_prob, res$pvalue), , drop = FALSE]
   g <- res[!duplicated(res[c("genomic_position", "strand", "database", "matrix_id")]), ,
            drop = FALSE]
   use_p <- "pvalue" %in% names(g) && any(is.finite(g$pvalue))
-  g$y  <- if (use_p) -log10(pmax(g$pvalue, 1e-300)) else g$score_frac
-  ylab <- if (use_p) "-log10 per-site p" else "PWM score (fraction of max)"
+  use_prob <- y_metric == "probability" && "binding_prob" %in% names(g) &&
+              any(is.finite(g$binding_prob))
+  if (y_metric == "probability" && !use_prob)
+    message("  no binding probabilities (needs TFMPvalue) - plotting -log10 p instead.")
+  g$y  <- if (use_prob) g$binding_prob else if (use_p) -log10(pmax(g$pvalue, 1e-300)) else g$score_frac
+  ylab <- if (use_prob) "proMotif binding probability" else
+          if (use_p) "-log10 per-site p" else "PWM score (fraction of max)"
   if (!is.null(color_seed)) set.seed(as.integer(color_seed))
   db_cols <- setNames(sample(.palette_pool, 2), c("JASPAR", "HOCOMOCO"))
-  ybot   <- if (use_p) 0 else m$threshold_frac
-  ylab_y <- ybot + (max(g$y, na.rm = TRUE) - ybot) * 1.25     # promoter labels
+  ybot   <- if (use_p || use_prob) 0 else m$threshold_frac
+  ylab_y <- ybot + ((if (use_prob) 1 else max(g$y, na.rm = TRUE)) - ybot) * 1.25  # promoter labels
   ytop   <- ybot + (ylab_y - ybot) * 0.97                      # top of shading
 
   ## Independent regions, ordered left -> right on the chromosome. When there is
@@ -193,7 +207,7 @@ plot_promoter_map <- function(scan, base_size = 12, point_size = 2.6,
 
   ## promoter windows + labels; labels of nearby promoters are staggered
   po <- prom[order(prom$region, prom$tss), , drop = FALSE]
-  k  <- stats::ave(seq_len(nrow(po)), po$region, FUN = seq_along)
+  k  <- ave(seq_len(nrow(po)), po$region, FUN = seq_along)
   rects <- data.frame(xmin = po$win_start, xmax = po$win_end, ymin = ybot, ymax = ytop,
                       lab_y = ylab_y - ((k - 1) %% 3) * (ylab_y - ybot) * 0.08,
                       region = po$region, tss = po$tss,
@@ -238,23 +252,78 @@ plot_promoter_map <- function(scan, base_size = 12, point_size = 2.6,
                  color = "grey30", linewidth = 0.6, inherit.aes = FALSE) +
     geom_label(data = rects, aes(x = tss, y = lab_y, label = lab), size = base_size / 3.8,
                label.size = 0, fill = "white", alpha = 0.85)
-  if (use_p) p <- p + geom_hline(yintercept = -log10(0.05), linetype = "dotted",
-                                 color = "grey50")
+  if (!use_prob && use_p) p <- p + geom_hline(yintercept = -log10(0.05), linetype = "dotted",
+                                      color = "grey50")
+  ## labels for the top sites (ids match the _top_sites.csv table)
   ring <- if (has_chip) g$chip_supported %in% TRUE &
                         g$chip_n_exp >= chip_ring_min_exp &
                         (if (use_p) g$pvalue <= chip_ring_p else TRUE)
           else logical(0)
   ring[is.na(ring)] <- FALSE
-  if (has_chip && any(ring))
-    p <- p + geom_point(data = g[ring, , drop = FALSE],
-                        aes(genomic_position, y), shape = 21, size = point_size * 2.1,
+  ## probability plots: rings mark sites that are significant for this locus
+  ## (black = also in a ChIP-Atlas peak, grey = motif evidence only)
+  sig_ring <- use_prob && "significant" %in% names(g)
+  ring_grey <- logical(nrow(g))
+  if (sig_ring) {
+    sg <- g$significant %in% TRUE
+    inpk <- if (has_chip) g$chip_supported %in% TRUE else logical(nrow(g))
+    ring <- sg & inpk; ring_grey <- sg & !inpk
+  }
+  ## labels for the top sites (ids match the _top_sites.csv table). No extra
+  ## marker: the label line ends at the ChIP ring if the site has one, else at
+  ## the point itself (ggrepel point.size per label)
+  lab <- NULL
+  if (label_top > 0 && use_prob && !is.null(scan$sites) && nrow(scan$sites)) {
+    st <- utils::head(scan$sites, label_top)
+    ringed <- if (any(ring | ring_grey)) {
+      rk <- paste(g$genomic_start, g$genomic_end, g$motif_strand_genomic)[ring | ring_grey]
+      paste(st$genomic_start, st$genomic_end, st$motif_strand_genomic) %in% rk
+    } else rep(FALSE, nrow(st))
+    lab <- data.frame(x = st$genomic_position, y = st$binding_prob,
+                      label = sprintf("%s %s %.2f", st$site_id, st$site_motif, st$binding_prob),
+                      psize = ifelse(ringed, point_size * 2.1, point_size))
+    lab$panel <- .panel_at(lab$x)
+    p <- p + (if (requireNamespace("ggrepel", quietly = TRUE))
+      ggrepel::geom_label_repel(data = lab, aes(x, y, label = label, point.size = psize),
+                                size = base_size / 4.4, point.padding = 0,
+                                min.segment.length = 0, max.overlaps = Inf, seed = 1,
+                                box.padding = 0.4, label.size = 0.15, fill = "white",
+                                alpha = 0.9, family = "mono")
+      else geom_text(data = lab, aes(x, y, label = label), vjust = -0.8,
+                     size = base_size / 4.4, check_overlap = TRUE))
+  }
+  ## rings get their own legend (mapped to size, the one aesthetic the map does
+  ## not use otherwise; the key colours are set with override.aes)
+  ring_labs <- c(black = if (sig_ring) "significant + ChIP peak" else
+                         if (use_p && chip_ring_p < 1) sprintf("ChIP peak & p <= %g", chip_ring_p)
+                         else "ChIP peak",
+                 grey  = "significant, motif only")
+  ring_used <- c(black = any(ring), grey = any(ring_grey))
+  if (ring_used[["grey"]]) {
+    d <- g[ring_grey, , drop = FALSE]; d$ring_type <- ring_labs[["grey"]]
+    p <- p + geom_point(data = d, aes(genomic_position, y, size = ring_type), shape = 21,
+                        stroke = 0.8, color = "grey55", fill = NA)
+  }
+  if (ring_used[["black"]]) {
+    d <- g[ring, , drop = FALSE]; d$ring_type <- ring_labs[["black"]]
+    p <- p + geom_point(data = d, aes(genomic_position, y, size = ring_type), shape = 21,
                         stroke = 0.8, color = "black", fill = NA)
-  sub <- sprintf("shaded = promoter windows (-%d/+%d bp); label = transcripts grouped at that promoter (* = canonical) | %d promoter(s)%s%s",
+  }
+  if (any(ring_used)) {
+    rl <- ring_labs[ring_used]
+    p <- p + scale_size_manual(values = stats::setNames(rep(point_size * 2.1, length(rl)), rl),
+                               breaks = unname(rl), name = "Ring",
+                               guide = guide_legend(order = 1, override.aes = list(
+                                 colour = c(black = "black", grey = "grey55")[names(rl)],
+                                 shape = 21, fill = NA, stroke = 0.8)))
+  }
+  sub <- sprintf("shaded = promoter windows (-%d/+%d bp); label = transcripts grouped at that promoter (* = canonical) | %d promoter(s)%s%s%s",
                  m$upstream, m$downstream, nrow(prom),
                  if (facet) "\none panel per promoter (the x axis is not continuous between panels)" else "",
-                 if (!has_chip) "" else
+                 "",
+                 if (use_prob || !has_chip) "" else
                    sprintf("\nblack ring = in a ChIP-Atlas peak%s%s (%d of %d in-peak sites)",
-                           if (use_p) sprintf(" & p <= %g", chip_ring_p) else "",
+                           if (use_p && chip_ring_p < 1) sprintf(" & p <= %g", chip_ring_p) else "",
                            if (chip_ring_min_exp > 1) sprintf(" & >= %d experiments",
                                                               as.integer(chip_ring_min_exp)) else "",
                            sum(ring), sum(g$chip_supported %in% TRUE)))
@@ -269,7 +338,8 @@ plot_promoter_map <- function(scan, base_size = 12, point_size = 2.6,
     xscale + layout +
     labs(x = sprintf("Absolute position on chromosome %s (bp)", m$chr), y = ylab,
          shape = "Motif strand",
-         title = sprintf("Predicted %s sites across the %s promoters", m$tf, m$gene),
+         title = if (use_prob) sprintf("%s binding probability across the %s promoters", m$tf, m$gene)
+                 else sprintf("Predicted %s sites across the %s promoters", m$tf, m$gene),
          subtitle = sub) +
     base_theme + theme(axis.text.x = element_text(angle = 30, hjust = 1),
                        strip.background = element_rect(fill = "grey92", color = NA),
@@ -277,7 +347,8 @@ plot_promoter_map <- function(scan, base_size = 12, point_size = 2.6,
                        legend.title = element_text(size = rel(0.85)),
                        legend.key.height = grid::unit(0.9, "lines"),
                        legend.spacing.y = grid::unit(0.2, "lines"))
-  if (!is.null(scan$chip) && nrow(scan$chip$peaks)) {
+  attr(p, "points") <- g                       # for hover (nearPoints) in the app
+  if (isTRUE(chip_track) && !is.null(scan$chip) && nrow(scan$chip$peaks)) {
     cov <- if (facet) do.call(rbind, lapply(seq_len(nrow(reg_rng)), function(i)
              cbind(.peak_coverage(scan$chip$peaks, reg_rng$xmin[i], reg_rng$xmax[i]),
                    panel = reg_rng$panel[i])))
@@ -289,15 +360,21 @@ plot_promoter_map <- function(scan, base_size = 12, point_size = 2.6,
       xscale + layout +
       labs(x = sprintf("Absolute position on chromosome %s (bp)", m$chr),
            y = "ChIP experiments\nwith a peak",
-           subtitle = sprintf("ChIP-Atlas %s peaks (MACS2 q < 1e-%s)%s: %d experiment(s) in these regions",
+           subtitle = sprintf("ChIP-Atlas %s peaks (MACS2 q < 1e-%s)%s: %d of %s queried experiment(s) have a peak here%s",
                               m$tf, scan$chip$threshold,
                               if (!is.null(cp)) paste0(", cells ~ '", cp, "'") else "",
-                              scan$chip$n_experiments)) +
+                              scan$chip$n_experiments,
+                              format(scan$chip$n_queried %||% NA),
+                              if (identical(scan$chip$mode, "experiments"))
+                                sprintf(" (newest %s of %s experiments, %.0f MB budget)",
+                                        format(scan$chip$n_queried), format(scan$chip$n_total),
+                                        scan$chip$max_mb) else "")) +
       base_theme + theme(axis.text.x = element_text(angle = 30, hjust = 1),
                          strip.text = element_blank(), strip.background = element_blank())
     p <- patchwork::wrap_plots(
       p + theme(axis.title.x = element_blank(), axis.text.x = element_blank()), pc,
       ncol = 1, heights = c(3, 1))
+    attr(p, "points") <- g
   }
   p
 }
@@ -319,7 +396,8 @@ plot_promoter_map <- function(scan, base_size = 12, point_size = 2.6,
 ## by chance in each promoter. BH q-values over all motifs are reported too.
 ## ===========================================================================
 
-.gene_transcripts <- function(gene, species, transcripts = "protein_coding") {
+.gene_transcripts <- function(gene, species, transcripts = "protein_coding",
+                              tss_source = "ensembl") {
   js  <- .ensembl_lookup_expand(gene, species)
   txs <- js$Transcript %||% list()
   if (length(txs) == 0) stop("No transcripts returned for ", gene)
@@ -333,7 +411,23 @@ plot_promoter_map <- function(scan, base_size = 12, point_size = 2.6,
   if (transcripts == "protein_coding" &&
       any(txdf$biotype == "protein_coding", na.rm = TRUE))
     txdf <- txdf[txdf$biotype == "protein_coding", , drop = FALSE]
-  list(txdf = txdf, chr = js$seq_region_name, strand = js$strand)
+  if (identical(tss_source, "epd")) {
+    epd <- .epd_tss(gene, species, chr = js$seq_region_name, strand = js$strand)
+    if (!is.null(epd) && nrow(epd)) {
+      can <- txdf$tss[txdf$is_canonical][1]
+      d   <- if (is.na(can)) rep(Inf, nrow(epd)) else abs(epd$tss - can)
+      ens <- txdf
+      txdf <- data.frame(transcript_id = epd$epd_id, biotype = "EPDnew",
+                         is_canonical = seq_len(nrow(epd)) == which.min(d) & min(d) <= 500,
+                         start = epd$tss, end = epd$tss, tss = epd$tss,
+                         stringsAsFactors = FALSE)
+      message(sprintf("  TSSs from EPDnew (experimentally mapped): %d for %s", nrow(txdf), gene))
+      return(list(txdf = txdf, chr = js$seq_region_name, strand = js$strand,
+                  source = "epd", ensembl = ens))
+    }
+    message("  no EPDnew promoter for ", gene, " - using Ensembl transcript TSSs.")
+  }
+  list(txdf = txdf, chr = js$seq_region_name, strand = js$strand, source = "ensembl")
 }
 
 #' TFs that distinguish a gene's promoters
@@ -347,6 +441,7 @@ plot_promoter_map <- function(scan, base_size = 12, point_size = 2.6,
 #' @inheritParams discover_regulators
 #' @param present_p Window p below which a TF counts as present (default 0.01).
 #' @param absent_p Window p above which a TF counts as absent (default 0.2).
+#' @param tss_source `"ensembl"` (default) or `"epd"` (EPDnew mapped TSSs).
 #' @return A list with \code{comparison} (one row per TF), \code{long},
 #'   \code{promoters} and \code{meta}; \code{comparison} is \code{NULL} for a
 #'   single-promoter gene.
@@ -358,12 +453,13 @@ compare_promoter_regulators <- function(gene, species = "homo_sapiens",
                                         present_p = 0.01, absent_p = 0.2,
                                         collection = "CORE", tax_group = "vertebrates",
                                         use_motifmatchr = TRUE, jaspar_db = NULL,
-                                jaspar_release = "2026") {
-  transcripts <- match.arg(transcripts)
+                                jaspar_release = "2026",
+                                tss_source = c("ensembl", "epd")) {
+  transcripts <- match.arg(transcripts); tss_source <- match.arg(tss_source)
   message("== differential promoter regulators: ", gene, " ==")
   if (!requireNamespace("TFMPvalue", quietly = TRUE))
     stop("Needs TFMPvalue: install.packages('TFMPvalue').")
-  gt   <- .gene_transcripts(gene, species, transcripts)
+  gt   <- .gene_transcripts(gene, species, transcripts, tss_source)
   merge_dist <- merge_dist %||% round((1 - max_overlap) * (upstream + downstream + 1))
   txdf <- .cluster_tss(gt$txdf, gt$strand, merge_dist)
   prom <- .promoter_table(txdf, gt$strand, upstream, downstream, max_overlap)$promoters
@@ -386,11 +482,8 @@ compare_promoter_regulators <- function(gene, species = "homo_sapiens",
     gene_info <- list(name = gene, chr = gt$chr, strand = gt$strand, tss = rp$tss[i],
                       start = tx$start, end = tx$end, species = species,
                       transcript_id = tx$transcript_id)
-    pinfo <- .with_retry(
-      function() GLproxScape::fetch_promoter_seq(gene_info, upstream = upstream, downstream = downstream),
-      tries = 2, waits = c(3, 8), what = paste("Ensembl seq", tx$transcript_id))
-    if (is.null(pinfo))
-      pinfo <- .fetch_seq_ucsc(gt$chr, rp$tss[i], gt$strand, upstream, downstream, species)
+    pinfo <- .promoter_seq(gene_info, upstream, downstream, species,
+                           ensembl = gt$source != "epd")
     if (is.null(pinfo)) { message("  could not fetch ", rp$promoter_id[i], " - dropped."); next }
     seqs[[rp$region[i]]] <- list(pinfo = pinfo, promoter_id = rp$promoter_id[i],
                                  tss = rp$tss[i], transcript_id = tx$transcript_id,
@@ -578,4 +671,32 @@ run_promoter_comparison <- function(gene, top_n = 30, out_root = "results",
   }
   message("Done (promoter comparison).")
   invisible(c(cmp, list(plot = plot)))
+}
+
+## EPDnew (experimentally mapped TSSs; human). Downloaded once and cached.
+.epd_url <- c(homo_sapiens = "https://epd.expasy.org/ftp/epdnew/H_sapiens/current/Hs_EPDnew.bed")
+
+.epd_tss <- function(gene, species = "homo_sapiens", chr = NULL, strand = NULL) {
+  url <- .epd_url[species]
+  if (is.na(url)) { message("  EPDnew: human only - using Ensembl TSSs."); return(NULL) }
+  d <- file.path(tools::R_user_dir("proMotif", "cache"), "epd")
+  dir.create(d, recursive = TRUE, showWarnings = FALSE)
+  f <- file.path(d, basename(url))
+  if (!file.exists(f)) {
+    message("  downloading EPDnew promoters (once) ...")
+    ok <- tryCatch({ utils::download.file(url, f, quiet = TRUE); TRUE },
+                   error = function(e) FALSE)
+    if (!ok) { unlink(f); message("  EPDnew download failed."); return(NULL) }
+  }
+  if (is.null(.f5_env$epd))
+    .f5_env$epd <- utils::read.table(f, sep = "", header = FALSE, stringsAsFactors = FALSE,
+                                     col.names = c("chr", "start", "end", "name", "score",
+                                                   "strand", "tstart", "tend"))
+  e <- .f5_env$epd
+  e <- e[sub("_[0-9]+$", "", e$name) == gene, , drop = FALSE]
+  if (!is.null(chr)) e <- e[sub("^chr", "", e$chr) == sub("^chr", "", chr), , drop = FALSE]
+  if (!is.null(strand)) e <- e[e$strand == if (strand == 1) "+" else "-", , drop = FALSE]
+  if (!nrow(e)) return(NULL)
+  data.frame(epd_id = e$name, tss = ifelse(e$strand == "+", e$start + 50, e$end - 49),
+             stringsAsFactors = FALSE)
 }

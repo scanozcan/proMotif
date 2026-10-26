@@ -18,7 +18,8 @@ compare_promoter_regulators(
   tax_group = "vertebrates",
   use_motifmatchr = TRUE,
   jaspar_db = NULL,
-  jaspar_release = "2026"
+  jaspar_release = "2026",
+  tss_source = c("ensembl", "epd")
 )
 }
 \arguments{
@@ -51,6 +52,8 @@ instead of auto-detecting an installed JASPAR package.}
 
 \item{jaspar_release}{JASPAR release year (default \code{"2026"}); the CORE
 non-redundant collection is downloaded once and cached.}
+
+\item{tss_source}{`"ensembl"` (default) or `"epd"` (EPDnew mapped TSSs).}
 }
 \value{
 A list with \code{comparison} (one row per TF), \code{long},

@@ -24,8 +24,7 @@ plot_binding_sites <- function(scan, base_size = 12, point_size = 2.6,
                                color_seed = NULL) {
   result <- scan$result; reps <- scan$reps; m <- scan$meta
   if (is.null(result) || nrow(result) == 0)
-    return(list(canonical = NULL, by_transcript = NULL, genomic = NULL,
-                canonical_sig = NULL, by_transcript_sig = NULL, genomic_sig = NULL))
+    return(list(canonical = NULL, by_transcript = NULL, genomic = NULL))
 
   gene <- m$gene; tf <- m$tf; gene_chr <- m$chr; gene_strand <- m$strand
   upstream <- m$upstream; downstream <- m$downstream; threshold_frac <- m$threshold_frac
@@ -108,7 +107,7 @@ plot_binding_sites <- function(scan, base_size = 12, point_size = 2.6,
                             ifelse(gene_strand == 1, "+", "-"), threshold_frac, nrow(gresult))) +
     base_theme + theme(axis.text.x = element_text(angle = 30, hjust = 1))
 
-  ## ---- significance plots (the three plots above are unchanged) ------------
+  ## ---- significance plots (new; the three plots above are unchanged) -------
   sig <- list(canonical_sig = NULL, by_transcript_sig = NULL, genomic_sig = NULL)
   if ("pvalue" %in% names(result) && any(is.finite(result$pvalue))) {
     result$neglogq <- -log10(pmax(result$pvalue, 1e-300))

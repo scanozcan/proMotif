@@ -4,7 +4,18 @@
 \alias{add_chip_peaks}
 \title{Annotate a confirm-mode scan with ChIP-Atlas peaks}
 \usage{
-add_chip_peaks(scan, threshold = "05", cell_pattern = NULL, max_mb = 300)
+add_chip_peaks(
+  scan,
+  threshold = "05",
+  cell_pattern = NULL,
+  max_mb = 300,
+  mode = c("auto", "assembled", "experiments"),
+  max_experiments = Inf,
+  sigma = 50,
+  support = c("locus", "all"),
+  prior = 1,
+  rep_half = 20
+)
 }
 \arguments{
 \item{scan}{A list returned by \code{\link{scan_binding_sites}} (optionally
@@ -16,7 +27,19 @@ annotated by \code{\link{add_chip_peaks}}).}
 \item{cell_pattern}{Optional regular expression on the sample annotation
 (e.g. \code{"HepG2|liver"}); spaces, "-" and "_" are ignored.}
 
-\item{max_mb}{Skip files larger than this many MB (default 300).}
+\item{max_mb}{Data budget in MB (default 300); see Details.}
+
+\item{mode}{ChIP-Atlas data source; see [fetch_chip_peaks()] (default `"auto"`).}
+
+\item{max_experiments}{Maximum number of experiments (default `Inf`).}
+
+\item{sigma}{Summit-proximity scale in bp (default 50; doubled for merged files, which give only the peak midpoint).}
+
+\item{support}{`"locus"` (default): normalise ChIP support by the experiments with a peak in the scanned windows (+ `prior`); `"all"`: by all queried experiments.}
+
+\item{prior}{Pseudo-count added to the number of locus experiments (default 1, so one experiment gives at most 0.5).}
+
+\item{rep_half}{Number of experiments at which the replication term reaches half its maximum (default 20).}
 }
 \value{
 The scan, annotated (unchanged if ChIP-Atlas was unavailable).

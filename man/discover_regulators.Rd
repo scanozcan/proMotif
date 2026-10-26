@@ -21,7 +21,8 @@ discover_regulators(
   promoters = c("all", "canonical"),
   transcripts = c("protein_coding", "all"),
   merge_dist = NULL,
-  max_overlap = 0.2
+  max_overlap = 0.2,
+  tss_source = c("ensembl", "epd")
 )
 }
 \arguments{
@@ -68,6 +69,8 @@ best site's FIMO per-site p-value).}
 
 \item{max_overlap}{Window overlap fraction at or above which TSSs belong to
 the same promoter (default 0.2).}
+
+\item{tss_source}{`"ensembl"` (default) or `"epd"` (EPDnew mapped TSSs).}
 }
 \value{
 A list with \code{result} (the full per-TF table: best-site position,

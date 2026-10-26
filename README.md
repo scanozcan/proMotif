@@ -7,18 +7,55 @@
 
 [![R-CMD-check](https://github.com/scanozcan/proMotif/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/scanozcan/proMotif/actions/workflows/R-CMD-check.yaml)
 
-Scan a gene's promoter for **transcription-factor binding sites** using JASPAR
-and HOCOMOCO motifs. You give it a **gene symbol** and a **TF**; proMotif looks
-up the gene's transcripts from
-Ensembl, fetches each promoter sequence, scans both strands for the TF's motif
-from both databases, assigns each hit a statistical significance, and draws the
-results per transcript and on genomic coordinates. An interactive Shiny app is
-included.
+**proMotif** finds and ranks **transcription factor (TF) binding sites in the
+promoters of a gene**. You give it a gene symbol and a TF; proMotif retrieves the
+gene's transcription start sites (TSSs), scans every promoter window on both
+strands with the TF's **JASPAR** and **HOCOMOCO** matrices, and reports each
+predicted site with its exact genomic coordinates and sequence. Each site gets a
+**binding probability** that combines motif strength, agreement between the two
+motif databases and public **ChIP-Atlas** ChIP-seq evidence, so a long list of
+motif matches becomes a short, ranked list of sites to test.
 
-Motifs come from **JASPAR 2026** and **HOCOMOCO v14** by default (older
-releases selectable). It reuses the
-[GLproxScape](https://github.com/scanozcan/GLproxScape) package's Ensembl
-fetchers.
+proMotif also works at the level of **promoters**: it groups TSSs into
+promoters (P1, P2, ...), compares TFs between the alternative promoters of a
+gene, ranks a gene's candidate regulators against a genome-wide promoter
+background (discovery mode), and shows which promoter is used in which cell
+type with FANTOM5 CAGE data. An interactive Shiny app is included.
+
+Typical uses:
+
+- **Plan experiments at a promoter.** Get the coordinates and sequences of the
+  most likely binding sites of a TF to design ChIP-qPCR primers around them, or
+  to choose bases to mutate in a reporter construct; lower-ranked sites in the
+  same window serve as negative controls.
+- **Check a TF-gene hypothesis** against motif evidence and hundreds of public
+  ChIP-seq experiments at once.
+- **Find candidate regulators** of a gene, promoter by promoter.
+- **Compare alternative promoters** of a gene for the TFs that distinguish them,
+  and see where each promoter is used.
+
+Motifs: **JASPAR 2026** (CORE, non-redundant) and **HOCOMOCO v14** by default.
+proMotif uses the [GLproxScape](https://github.com/scanozcan/GLproxScape)
+package's Ensembl fetchers.
+
+---
+
+## Contents
+
+1. [Installation](#installation)
+2. [Quick start](#quick-start)
+3. [TF binding sites and the binding probability](#tf-binding-sites-and-the-binding-probability)
+4. [ChIP-Atlas evidence and the data budget](#chip-atlas-evidence-and-the-data-budget)
+5. [Alternative promoters](#alternative-promoters)
+6. [Promoter usage across cell types (FANTOM5 CAGE)](#promoter-usage-across-cell-types-fantom5-cage)
+7. [Discovery mode: which TFs could regulate this gene?](#discovery-mode-which-tfs-could-regulate-this-gene)
+8. [Comparing the promoters of a gene](#comparing-the-promoters-of-a-gene)
+9. [The Shiny app](#the-shiny-app)
+10. [A complete example with all settings](#a-complete-example-with-all-settings)
+11. [Function reference and default values](#function-reference-and-default-values)
+12. [Output files](#output-files)
+13. [Caching, options and offline use](#caching-options-and-offline-use)
+14. [Notes and caveats](#notes-and-caveats)
 
 ---
 
@@ -31,16 +68,24 @@ From GitHub (installs GLproxScape automatically):
 remotes::install_github("scanozcan/proMotif")
 ```
 
-Two optional packages unlock extra features:
+Optional packages:
 
 ```r
-install.packages("shiny")      # for the interactive app, launch_app()
-install.packages("TFMPvalue")  # for the significance (p-value) plots
+install.packages(c("TFMPvalue",   # per-site p-values, binding probability, discovery mode
+                   "ggrepel",     # labels on the top-sites and discovery plots
+                   "curl",        # parallel ChIP-Atlas downloads
+                   "shiny"))      # the interactive app, launch_app()
+BiocManager::install(c("TFBSTools", "motifmatchr", "Biostrings"))  # faster discovery (optional)
 ```
 
-An **internet connection is required at run time** — Ensembl is queried live.
-The JASPAR 2026 and HOCOMOCO v14 collections are downloaded once and cached
-(`tools::R_user_dir("proMotif", "cache")`), as are ChIP-Atlas files.
+`TFMPvalue` is strongly recommended: without it, sites are reported with PWM
+scores only (no p-values, and the binding probability falls back to score
+fractions).
+
+proMotif needs an **internet connection** the first time a gene, motif database
+or ChIP-Atlas file is used (Ensembl, UCSC, JASPAR, HOCOMOCO, EPDnew,
+ChIP-Atlas). Everything it downloads is cached under
+`tools::R_user_dir("proMotif", "cache")`, so repeated analyses run locally.
 
 ---
 
@@ -49,264 +94,303 @@ The JASPAR 2026 and HOCOMOCO v14 collections are downloaded once and cached
 ```r
 library(proMotif)
 
-# scan the ATP7B promoter for MTF1 sites, write a CSV + plots to results/ATP7B_MTF1/
-run_binding_site_analysis("ATP7B", "MTF1")
+# Predicted ESR1 sites in the TFF1 promoter, ranked by binding probability,
+# with ChIP-Atlas evidence from breast cancer cells.
+# Writes CSVs and PDFs to results/TFF1_ESR1/
+r <- run_binding_site_analysis("TFF1", "ESR1",
+                               chip = TRUE,
+                               chip_cell_pattern = "MCF-7|T-47D|ZR-75|breast",
+                               chip_max_mb = 1000)
 
-# or launch the point-and-click app
+r$top_sites          # likely binding sites: coordinates, sequences, probability
+r$plots$top_sites    # the top sites on the genome, with the ChIP-seq track
+
+# No TF: rank the candidate regulators of a gene (discovery mode)
+run_binding_site_analysis("TFF1")
+
+# Point-and-click front end
 launch_app()
 ```
 
 ---
 
-## The functions
+## TF binding sites and the binding probability
 
-For most uses you only need the first function or the app.
+### What a scan does
 
-| Function | What it does |
-|---|---|
-| `run_binding_site_analysis(gene, tf, ...)` | One-shot: scan + plots + writes a CSV and PDF figures to disk. Start here. **Omit `tf` for discovery mode** (see below). |
-| `launch_app()` | Interactive Shiny app — type a gene + TF, view the plots, download the table. |
-| `scan_binding_sites(gene, tf, ...)` | Just the scan (the slow, network part). Returns the data, no plots. |
-| `plot_binding_sites(scan, ...)` | Builds the plots from a `scan_binding_sites()` result (fast, local). |
-| `run_regulator_discovery(gene, ...)` | Discovery mode: rank a gene's candidate regulators against all of JASPAR CORE (see *Discovery mode*). |
-| `discover_regulators(gene, ...)` / `plot_regulators(disc)` | The discovery scan (data) and its plots. |
-| `expand_regulators(disc, n = 5, chip = TRUE)` | Targeted follow-up of the top discovery TFs: full single-TF scan of each (promoter map, ChIP-Atlas track and rings). |
-| `run_promoter_comparison(gene, ...)` | TFs that distinguish a gene's alternative promoters (see *Alternative promoters*). |
-| `plot_promoter_map(scan)` / `summarise_promoters(scan)` | Sites across all promoters of a gene, and a per-promoter summary. |
-| `add_chip_peaks(scan)` / `add_chip_targets(disc)` | Add ChIP-Atlas evidence (also via `chip = TRUE`, see *ChIP-Atlas evidence*). |
-| `add_promoter_usage(scan)` / `plot_promoter_usage(scan)` / `plot_promoter_usage_cancer(scan)` | Which promoter is used in which cell type, and normal vs cancer (FANTOM5 CAGE; also via `usage = TRUE`, see *Promoter usage*). |
+For a gene and a TF, `scan_binding_sites()`:
 
-The last two let you scan once and re-plot many times (e.g. restyle without
-re-querying the databases):
+1. looks up the gene's transcripts in Ensembl (or its experimentally mapped TSSs
+   in EPDnew, `tss_source = "epd"`);
+2. groups TSSs into promoters and takes a window around each TSS
+   (`upstream = 2500`, `downstream = 500` bp);
+3. fetches the window sequence from Ensembl (UCSC as fallback);
+4. scans both strands with the TF's JASPAR and HOCOMOCO matrices and keeps
+   positions scoring at least `threshold_frac` (0.80) of the matrix score range;
+5. gives each site a FIMO-style per-site p-value (exact, with the window's base
+   composition as background; `TFMPvalue`) and a Benjamini-Hochberg q-value over
+   all positions tested;
+6. annotates each site with its genomic coordinates and sequences, and scores
+   its binding probability.
 
 ```r
-s <- scan_binding_sites("TERT", "CTCF")       # slow: fetch + scan
-p <- plot_binding_sites(s, base_size = 16)    # fast: rebuild plots
-p$genomic                                     # show one plot
+s <- scan_binding_sites("KLK3", "AR", upstream = 4500)   # slow part: network + scan
+s <- add_chip_peaks(s, cell_pattern = "LNCaP|VCaP|22Rv1|prostate", max_mb = 1000)
+head(s$sites)                                             # ranked distinct sites
+top_binding_sites(s)                                      # P >= 0.5, at least 10 sites
+plot_top_sites(s, top_n = 10)                             # fast: local plotting
 ```
 
-### Key arguments
+### Site annotation
 
-| Argument | Default | Meaning |
+Every site carries:
+
+| Field | Meaning |
+|---|---|
+| `genomic_start`, `genomic_end` | motif span, 1-based, genomic plus-strand coordinates |
+| `motif_strand_genomic` | strand of the motif on the genome |
+| `position` / `position_rel_tss` | position relative to the TSS of its window (bp; negative = upstream) |
+| `site` | sequence as read in the promoter (gene orientation) |
+| `site_motif` | sequence in motif orientation (reads like the logo) |
+| `site_genomic` | sequence on the genomic plus strand (paste into a genome browser) |
+| `context_genomic` | `site_genomic` with `flank` (10) bases on each side, flanks in lower case |
+
+### The binding probability
+
+A motif match alone is weak evidence: short motifs match many positions in a
+3-kb window by chance. proMotif therefore combines the evidence for each site
+on the logit scale:
+
+```
+logit P = -3 + 4 x motif_strength + 0.5 x db_agreement + 2.5 x chip_support + 2 x chip_replication
+```
+
+| Term | Range | Definition |
 |---|---|---|
-| `gene`, `tf` | — | HGNC gene symbol and TF symbol (required) |
-| `species` | `"homo_sapiens"` | Ensembl species token |
-| `upstream`, `downstream` | `2500`, `500` | promoter window around each TSS (bp) |
-| `threshold_frac` | `0.80` | PWM cutoff as a fraction of the matrix min–max score |
-| `transcripts` | `"protein_coding"` | or `"all"` (see *Alternative promoters* below) |
-| `max_transcripts` | `8` | cap on TSS windows scanned (canonical first, then one TSS per promoter) |
-| `jaspar_release` | `"2026"` | JASPAR release (CORE non-redundant; `"2024"`, `"2022"` also work) |
-| `hocomoco_version`, `hocomoco_species` | `"v14"`, `"human"` | HOCOMOCO release (`"v12"`/`"v11"` also work; v14 covers human and mouse in one collection) |
-| `out_root` | `"results"` | output folder |
-| `color_seed` | `NULL` | fix the two database colours reproducibly (NULL = fresh each run) |
-| `base_size`, `point_size` | `12`, `2.6` | plot font and marker size |
-| **Promoters** | | |
-| `scan_unit` | `"tss"` | `"tss"` = one window per distinct TSS; `"promoter"` = one window per promoter |
-| `max_overlap` | `0.2` | TSSs whose windows overlap by at least this fraction form one promoter |
-| `merge_dist` | `NULL` | override: TSSs closer than this (bp) form one promoter (`NULL` = from `max_overlap`, ~2.4 kb) |
-| **ChIP-Atlas** (human) | | |
-| `chip` | `FALSE` | add ChIP-Atlas evidence (downloaded once, then cached) |
-| `chip_threshold` | `"05"` | peak q-value class: `"05"`, `"10"`, `"20"` (q < 1e-5, 1e-10, 1e-20) |
-| `chip_cell_pattern` | `NULL` | regex restricting experiments to cell types, e.g. `"HepG2\|liver"` |
-| `chip_max_mb` | `300` | skip ChIP-Atlas files larger than this (MB) |
-| `chip_ring_p` | `1e-3` | promoter map: ring in-peak sites with per-site p at or below this |
-| `chip_ring_min_exp` | `1` | promoter map: ring only sites supported by at least this many experiments |
-| `chip_distance` | `1` | discovery mode only (`run_regulator_discovery`): kb around the TSS (1, 5 or 10) |
-| **Promoter usage** (human) | | |
-| `usage` | `FALSE` | add FANTOM5 CAGE promoter usage across 608 sample types and the normal vs cancer plot |
-| `usage_flank` | `500` | CAGE peaks within this many bp of a promoter's TSSs count for that promoter |
+| `motif_strength` | 0-1 | log10(p) / log10(p of a perfect match to the same matrix). Puts short and long motifs on the same scale. |
+| `db_agreement` | 0/1 | 1 if the other database (JASPAR / HOCOMOCO) calls a site within 10 bp on the same strand. |
+| `chip_support` | 0-1 | Summit-weighted share of the ChIP-Atlas experiments binding this locus that have a peak centred on the site (see below). |
+| `chip_replication` | 0-1 | Grows with the number of experiments with a peak over the site: 1, 3, 10, 20, 60 experiments give 0.002, 0.02, 0.2, 0.5, 0.9. |
+
+What this means in practice:
+
+| Situation | P |
+|---|---|
+| Perfect motif, no ChIP-seq data | 0.73 |
+| Perfect motif, both databases agree | 0.82 |
+| Weak motif (strength 0.3), no ChIP-seq data | 0.14 |
+| Perfect motif with full ChIP-seq support and replication | > 0.99 |
+
+ChIP-seq evidence can raise a site, never lower it, and without ChIP-seq data
+the ranking still follows the motif evidence. `motif_prob` is the same score
+without the ChIP-seq terms.
+
+**ChIP-seq support in detail.** For each experiment with a peak over the site,
+the closest peak summit gives a weight `exp(-d^2 / (2 sigma^2))` (`sigma = 50`
+bp; doubled when only the peak interval is known), multiplied by the site's
+motif strength relative to the best motif inside that experiment's peaks, so a
+weak match next to a strong one receives only part of the peak's credit. The
+weights are summed and divided by the number of experiments with any peak in the
+scanned windows plus one (`support = "locus"`, `prior = 1`; one experiment alone
+gives at most 0.5). `support = "all"` divides by all queried experiments
+instead (also reported as `chip_support_all`). The replication term is
+`k^2 / (k^2 + 20^2)` for `k` supporting experiments (`rep_half = 20`), scaled
+by the same relative motif strength.
+
+**Confidence and significance.** Sites are `high` (P >= 0.8), `medium`
+(0.5-0.8) or `low` confidence. A site is `significant` for its locus when its
+robust z-score of logit P against all distinct sites in the scanned windows,
+(logit P - median) / MAD, is at least 2 **and** P >= 0.5. In the top-sites
+plots, significant sites get a black ring (inside a ChIP-Atlas peak) or a grey
+ring (motif evidence only).
+
+The weights are set by design rather than fitted to training data, so P is a
+transparent evidence score, not a calibrated posterior probability. Change them
+with `options(promotif.score_weights = list(intercept = -3, motif = 4,
+databases = 0.5, chip = 2.5, replication = 2))` (any subset), and the
+significance thresholds with `options(promotif.sig_z = 2, promotif.sig_min_prob
+= 0.5)`.
+
+### Motif logo
+
+```r
+plot_motif_logo(s)     # JASPAR and HOCOMOCO matrices, forward and reverse complement
+motif_matrices(s)      # probabilities, information content and consensus per position
+```
+
+Looking at both matrices is useful: databases sometimes describe the same TF
+quite differently, and the logo shows which sequence the sites are matched to.
 
 ---
 
-## Outputs
+## ChIP-Atlas evidence and the data budget
 
-`run_binding_site_analysis()` writes to `results/<GENE>_<TF>/`:
+`chip = TRUE` (or `add_chip_peaks()`) adds public ChIP-seq peaks of the same TF
+from [ChIP-Atlas](https://chip-atlas.org) (human, hg38; MACS2 q < 1e-5 by
+default). For heterodimer matrices such as `MAX::MYC`, the peaks of both
+partners are combined. Restrict the experiments to relevant cell types with a
+regular expression (spaces, `-` and `_` are ignored):
 
-- **`<GENE>_<TF>_binding_sites.csv`** — one row per predicted site.
-- **Score plots:** `*_canonical.pdf`, `*_by_transcript.pdf`, `*_genomic.pdf`.
-- **Significance plots** (if `TFMPvalue` is installed): `*_canonical_significance.pdf`, `*_by_transcript_significance.pdf`, `*_genomic_significance.pdf`.
+```r
+run_binding_site_analysis("AFP", "FOXA1", chip = TRUE,
+                          chip_cell_pattern = "HepG2|liver")
+```
 
-The three plot views:
+**Data budget.** ChIP-Atlas merges all experiments of a TF into one file, which
+for well-studied TFs is very large (ESR1 about 6.9 GB, AR about 5.9 GB in hg38).
+`chip_max_mb` (default 300) is a budget, not an on/off switch:
 
-- **canonical** — predicted sites in the canonical transcript's promoter, by position relative to the TSS.
-- **by transcript** — one panel per transcript / alternative promoter (TSS).
-- **genomic** — all sites on real chromosome coordinates, with each TSS marked and an arrow showing the transcription direction from the canonical TSS. A site that falls inside several transcripts' promoter windows is one genomic locus, so it is drawn once here (per database and strand) rather than once per transcript as in the per-transcript view.
+- if the merged file is cached or within the budget, it is used as a whole
+  (all experiments);
+- otherwise proMotif lists the TF's experiments, keeps those matching
+  `chip_cell_pattern`, orders them **newest first** (highest accession number)
+  and downloads small per-experiment files (about 0.5-2 MB each, with the exact
+  peak summit) until the budget is used.
 
-The score plots put `score_frac` (fraction of the matrix's max score) on the
-y-axis; the significance plots put `-log10(per-site p)` with a dotted line at
-p = 0.05. The per-site p-value follows the FIMO approach (see *Significance*
-below), so the strongest matches rise highest.
+```r
+# up to 1 GB of ESR1 data, newest MCF-7 / T-47D experiments first
+run_binding_site_analysis("TFF1", "ESR1", chip = TRUE, chip_max_mb = 1000,
+                          chip_cell_pattern = "MCF-7|T-47D")
 
-### CSV columns
+# at most 50 experiments
+run_binding_site_analysis("TFF1", "ESR1", chip = TRUE, chip_max_experiments = 50)
 
-| column | meaning |
-|---|---|
-| `transcript_id`, `is_canonical` | transcript the window came from |
-| `chr`, `gene_strand`, `tss_genomic` | locus and the TSS used |
-| `database`, `matrix_id`, `matrix_name` | JASPAR or HOCOMOCO and the exact motif matrix |
-| `position` | site position relative to the TSS (bp; negative = upstream) |
-| `strand` | strand the motif matched (`+`/`-`) |
-| `score`, `score_frac` | raw PWM log-odds score and its fraction of the matrix max |
-| `pvalue`, `qvalue` | FIMO-style per-site p-value (exact, GC-aware background) and its Benjamini-Hochberg FDR q-value over all positions tested (both NA without `TFMPvalue`) |
-| `genomic_position` | absolute chromosome coordinate of the site |
-| `site` | the matched promoter sequence |
+# always per-experiment files (exact summits), or only the merged file
+run_binding_site_analysis("HBB", "GATA1", chip = TRUE, chip_mode = "experiments")
+run_binding_site_analysis("HBB", "GATA1", chip = TRUE, chip_mode = "assembled")
+
+# the experiment list itself, and peaks of a region directly
+list_chip_experiments("AR", cell_pattern = "LNCaP")
+fetch_chip_peaks_budget("AR", "19", 50850000, 50856000, budget_mb = 300)
+```
+
+All ChIP-Atlas files are cached, so the next gene with the same TF needs no
+download. Each site gets `chip_n_exp` (experiments with a peak over it),
+`chip_max_score`, `chip_cell_types`, `chip_supported`, `chip_summit_dist`,
+`chip_support`, `chip_support_all` and `chip_replication`, and the maps gain a
+peak-coverage track.
+
+In discovery mode, `chip = TRUE` instead reports, for each top TF, the share of
+its ChIP-Atlas experiments with a peak within 1, 5 or 10 kb of the gene's TSS
+(`chip_distance`), from the ChIP-Atlas Target Genes tables.
 
 ---
 
 ## Alternative promoters
 
-Annotated transcripts often start only a few bp apart, so their promoter windows
-carry almost the same sequence. proMotif groups TSSs into **promoters**: TSSs
-whose scan windows overlap by at least `max_overlap` (default 20%, i.e. TSSs
-within ~2.4 kb for a -2500/+500 window) form one promoter, numbered P1, P2, ...
-from 5' to 3'. Every run prints the gene's promoter structure.
+Annotated transcripts often start only a few bp apart, so their windows carry
+almost the same sequence. proMotif groups TSSs into **promoters**: TSSs whose
+windows overlap by at least `max_overlap` (20%; TSSs within about 2.4 kb for a
+-2500/+500 window) form one promoter, numbered P1, P2, ... from 5' to 3'. Every
+run prints the promoter structure of the gene.
 
 ```r
-run_binding_site_analysis("TP73", "TP53", transcripts = "all",
-                          scan_unit = "promoter")   # one window per promoter
-run_promoter_comparison("TP73", transcripts = "all")  # TFs that distinguish them
+run_binding_site_analysis("TP73", "TP53",
+                          transcripts = "all",        # include non-coding isoforms
+                          scan_unit = "promoter",     # one window per promoter
+                          tss_source = "epd")         # experimentally mapped TSSs
 ```
 
-Outputs: `*_promoters.csv` (per-promoter summary) and `*_promoter_map.pdf`
-(each promoter's window labelled with the number of transcripts grouped there,
-`*` = canonical; every TSS drawn; one panel per promoter when they are far
-apart). `max_transcripts` keeps the canonical TSS first, then one TSS per
-promoter, so no promoter is silently dropped.
+- `transcripts = "protein_coding"` (default) or `"all"`: alternative-promoter
+  isoforms are often non-coding biotypes, so `"all"` shows more promoters.
+- `scan_unit = "tss"` (default) scans every distinct TSS; `"promoter"` one
+  window per promoter.
+- `tss_source = "ensembl"` (default) uses annotated transcript starts;
+  `"epd"` uses EPDnew TSSs mapped by CAGE and other experiments (human).
+- `max_transcripts = 8` caps the number of windows; the canonical TSS comes
+  first, then one TSS per promoter, so no promoter is dropped.
 
-`run_promoter_comparison()` scans each promoter against JASPAR CORE and compares
-the **window p-value** of each TF's best site, 1 - (1 - p)^m (m = positions
-tested): the chance that a random window of this size holds a site this strong.
-Windows have equal length, so promoters are compared fairly. Calls
-(`P1-specific`, `shared`, ...) are a prioritisation, not proof of binding.
-
-## ChIP-Atlas evidence
-
-`chip = TRUE` adds public ChIP-seq evidence from
-[ChIP-Atlas](https://chip-atlas.org) (human, hg38). Files are downloaded once and
-cached; files above `chip_max_mb` (default 300 MB) are skipped with a message.
-
-```r
-run_binding_site_analysis("ATP7B", "MTF1", chip = TRUE,
-                          chip_cell_pattern = "HepG2|liver")
-run_regulator_discovery("MT2A", chip = TRUE, chip_distance = 1)
-```
-
-- **Confirm mode:** each site gets `chip_n_exp`, `chip_max_score`,
-  `chip_cell_types` and `chip_supported`; the promoter map gains a peak-coverage
-  track, and in-peak sites with p <= `chip_ring_p` (default 1e-3) get a black ring.
-- **Discovery mode:** each top TF gets the share of its ChIP-Atlas experiments
-  with a peak within +/- 1/5/10 kb of the TSS, plus a motif-vs-ChIP plot.
-
-Caveats: a peak (~200-500 bp) shows the TF binds that region in some cell type,
-not necessarily at the predicted motif or in your cells; HOCOMOCO matrices were
-partly trained on public ChIP-seq, so agreement with HOCOMOCO is partly circular.
+`plot_promoter_map()` shows all sites across the promoters (shaded windows,
+every TSS drawn, one panel per promoter when they are far apart), and
+`summarise_promoters()` gives a per-promoter table.
 
 ---
 
 ## Promoter usage across cell types (FANTOM5 CAGE)
 
-Motifs say which TFs *could* bind each promoter; CAGE says which promoter is
-actually *used*, and where. With `usage = TRUE` (or `add_promoter_usage(scan)`),
-the FANTOM5 CAGE signal of peaks within `usage_flank` bp of each promoter's TSSs
-is summed in each of 608 sample types (primary cells, tissues, cell lines;
-donors averaged), giving each promoter's share of the gene's expression.
+Motifs say which TFs could bind each promoter; CAGE shows which promoter is
+used, and where. With `usage = TRUE` (or `add_promoter_usage()`), the FANTOM5
+CAGE signal of peaks within `usage_flank` (500) bp of each promoter's TSSs is
+summed in each of 608 sample types (primary cells, tissues, cell lines; donors
+averaged), giving each promoter's share of the gene's expression.
 
 ```r
 options(promotif.fantom5_dir = "/path/to/fantom5_promoter_tpm_hg38")
 r <- run_binding_site_analysis("TP73", "TP53", transcripts = "all",
                                scan_unit = "promoter", usage = TRUE)
-r$plots$usage          # sample types where each promoter is used most
-r$plots$usage_cancer   # every promoter, normal vs cancer, lineage-matched
+r$plots$usage          # sample types in which each promoter is used most
+r$plots$usage_cancer   # each promoter, normal vs cancer, lineage-matched
+
+p <- plot_promoter_track("TP73")   # CAGE normal vs cancer, promoters, transcripts
+ggplot2::ggsave("TP73_track.pdf", p, width = 11, height = attr(p, "height"))
 ```
 
-- `plot_promoter_usage()` - per promoter, the sample types in which it carries
-  the largest share, plus the highest-expressing sample types (numbers = TPM).
-- `plot_promoter_usage_cancer()` - share of every promoter (and total TPM) in
-  normal samples (primary cells, tissues) vs cancer cell lines of the same
-  lineage (keyword-assigned: blood, brain, colon, ...), two-sided Wilcoxon.
+- `plot_promoter_usage()`: per promoter, the sample types where it carries the
+  largest share, plus the highest-expressing sample types (TPM).
+- `plot_promoter_usage_cancer()`: share of every promoter (and total TPM) in
+  normal samples vs cancer cell lines of the same lineage, two-sided Wilcoxon.
+- `plot_promoter_track()`: one gene on the genome with CAGE peaks in normal and
+  cancer samples, promoter arrows labelled with expression and usage share, and
+  Ensembl transcripts coloured by the promoter they start from.
 
-The FANTOM5 folder (~40 MB) is not shipped with the package; build it with
-`data-raw/fantom5/` and point `options(promotif.fantom5_dir = ...)` to it (or
-copy it to `tools::R_user_dir("proMotif", "data")`). Caveats: CAGE misses weak
-promoters ("not used" = below detection); FANTOM5 cancer samples are cell lines,
-not tumours, so culture adaptation is part of any difference.
+The FANTOM5 folder (about 40 MB) is built with `data-raw/fantom5/` and is not
+shipped with the package; point `options(promotif.fantom5_dir = ...)` to it or
+copy it to `tools::R_user_dir("proMotif", "data")`.
 
-## Discovery mode — "what regulates this gene?"
+---
 
-Call `run_binding_site_analysis()` (or `discover_regulators()`) **with no TF**
-and proMotif flips from "does TF X bind gene Y?" to "which TFs *could* regulate
-gene Y?". It scans **every promoter of the gene** (the same TSS groups as the
-single-TF mode; `promoters = "canonical"` for the canonical one only) against
-the **whole JASPAR CORE collection** and ranks transcription factors by their
-single strongest match, **separately for each promoter** (plots get one panel
-per promoter; `promoter_id` in the tables).
+## Discovery mode: which TFs could regulate this gene?
 
-**Ranking against a promoter background (default).** A raw per-site p-value
-favours long or GC-rich motifs that match well in almost *any* promoter. So by
-default each TF is ranked by how unusual this gene's best site is **compared with
-the best site of the same motif in all 20,094 human protein-coding promoters** (Ensembl
-canonical TSS, same -2500/+500 window, hg38): `bg_pvalue` = P(a typical
-promoter's best site scores at least this high), read from that motif's
-empirical background distribution (an exponential tail is used only beyond the
-strongest background promoter), with BH `bg_qvalue`. `rank_by = "fimo"` restores the FIMO per-site
-p-value ranking. The background is precomputed for JASPAR 2026 and shipped with
-the package (`inst/extdata/`; built by `data-raw/make_promoter_background.py`);
-for other windows the background is shifted by extreme-value max-stability; for other
-species or releases discovery falls back to FIMO p.
+Call `run_binding_site_analysis()` without a TF, or `run_regulator_discovery()`,
+and proMotif scans **every promoter of the gene** against the whole **JASPAR
+CORE** collection (1,019 vertebrate matrices) and ranks TFs separately for each
+promoter.
+
+**Promoter background.** Raw p-values favour long or GC-rich motifs that match
+well in almost any promoter. By default (`rank_by = "background"`), each TF is
+ranked by how unusual this gene's best site is compared with the best site of
+the same motif in **20,094 human protein-coding promoters** (Ensembl canonical
+TSS, -2500/+500 bp, hg38): `bg_pvalue` is the share of promoters whose best site
+scores at least as high (an exponential tail beyond the strongest promoter),
+with BH `bg_qvalue`. The background ships with the package for JASPAR 2026;
+`rank_by = "fimo"` ranks by the per-site p-value instead.
 
 ```r
-run_binding_site_analysis("SNCA")            # no TF -> discovery
-run_regulator_discovery("SNCA", top_n = 25)  # same, explicit, more TFs
-d <- discover_regulators("ATP7B")            # just the ranked table
+run_regulator_discovery("SNCA", top_n = 25)            # writes results/SNCA_regulators/
+d <- discover_regulators("ATP7B", tss_source = "epd")   # the ranked table only
+d <- add_chip_targets(d, distance = 1)                  # ChIP-Atlas Target Genes support
+plot_regulators(d)$ranking
+plot_regulators_chip(d)
+
+ex <- expand_regulators(d, n = 3, chip = TRUE)          # full single-TF scans of the top TFs
+plot_top_sites(ex[[1]])
 ```
 
-**Extra packages** (discovery only; install once):
+TFs whose best sites fall at the same locus (within `site_window`, 20 bp) are
+grouped, so one element is not listed many times; the CSV keeps every TF with a
+`site_group` and `is_representative` flag. `run_regulator_discovery()` follows
+up the top `expand_top` (5) TFs with targeted scans written to
+`results/<GENE>_regulators/top_TFs/<TF>/`.
+
+Discovery is a **prioritisation**: a strong best site is not evidence of
+binding, which depends on chromatin, TF levels, cofactors and cell type. Follow
+up candidates with the single-TF mode and ChIP-Atlas evidence.
+
+---
+
+## Comparing the promoters of a gene
 
 ```r
-install.packages(c("TFMPvalue", "ggrepel"))
-BiocManager::install(c("TFBSTools", "motifmatchr", "Biostrings"))  # optional, speed
+run_promoter_comparison("TP73", transcripts = "all")
+cmp <- compare_promoter_regulators("TP73", transcripts = "all", tss_source = "epd")
+plot_promoter_regulators(cmp, top_n = 30)
 ```
 
-`TFMPvalue` (ranking metric) is required. The motif collection is JASPAR 2026
-CORE vertebrates (1,019 non-redundant matrices), downloaded once from
-jaspar.elixir.no and cached, so no JASPAR data package is needed.
-`motifmatchr` + `Biostrings` + `TFBSTools` only pre-shortlist motifs for speed;
-`ggrepel` tidies the needle-map labels. To use a Bioconductor JASPAR package
-instead (e.g. `JASPAR2024` + `RSQLite`), pass `jaspar_release = NULL` or a
-`jaspar_db`. All are `Suggests`, so the core (single-TF) workflow needs none of
-them.
-
-**Targeted follow-up of the top TFs.** `run_regulator_discovery()` then runs the
-single-TF scan for the top `expand_top` TFs (default 5; `0` = off) and writes,
-per TF, a site CSV, the promoter map (with the ChIP-Atlas coverage track and
-black rings when `chip = TRUE`) and the genomic significance plot to
-`results/<GENE>_regulators/top_TFs/<TF>/`. Interactively: `ex <- expand_regulators(d, n = 3, chip = TRUE); plot_promoter_map(ex[[1]])`.
-
-**Outputs** go to `results/<GENE>_regulators/`: a CSV (`*_candidate_regulators.csv`)
-and three PDFs — `*_regulators_ranking.pdf` (lollipop of top TFs by `-log10` p),
-`*_regulators_map.pdf` (best-site position per TF), and `*_regulators_needle.pdf`
-(a promoter needle plot: position vs significance, so site hotspots stand out).
-
-**How ties and redundancy are handled.** A TF with several matrices is
-represented by its best-scoring one. TFs whose best site falls at the **same
-locus** (within `site_window`, default 20 bp) are grouped — the same element is
-not listed many times. The best-p TF becomes the group representative and the
-others are listed in `shares_site_with`; a `(+N)` on a plot label means N more
-TFs share that site. **Nothing is dropped**: the CSV keeps every TF with a
-`site_group` id and an `is_representative` flag. TF family is only an
-annotation (colour), not a grouping key.
-
-**Important — read this as prioritisation, not proof.** The promoter background
-answers "is this gene's best site unusually strong for this motif?", not "is the
-motif enriched across a gene set" (use AME/HOMER/Pscan for sets), and a motif
-match is **not** evidence of binding: real occupancy depends on chromatin,
-concentration, cofactors and cell type. Use it to decide **which TFs are worth
-following up**, and confirm with the single-TF mode plus orthogonal data
-(`chip = TRUE` for ChIP-Atlas, accessibility).
-
-Key arguments: `top_n` (how many to show), `rank_by` (`"background"` or
-`"fimo"`), `collapse_site` / `site_window` (shared-site grouping), `upstream`/`downstream` (promoter window),
-`tax_group` (e.g. `"vertebrates"`), `species`.
+Each promoter is scanned against JASPAR CORE and TFs are compared by the
+**window p-value** of their best site, `1 - (1 - p)^m` (m = positions tested),
+the chance that a random window of this size holds a site this strong. A TF is
+called present at a promoter with window p <= `present_p` (0.01) and absent with
+window p > `absent_p` (0.2), giving calls such as `P1-specific` or `shared`.
 
 ---
 
@@ -316,89 +400,332 @@ Key arguments: `top_n` (how many to show), `rank_by` (`"background"` or
 launch_app()
 ```
 
-Three modes:
+- **Gene + TF:** top sites (binding probability, hover a point to see the site
+  id, coordinates, sequence with flanks, p- and q-values, ChIP-seq evidence and
+  probability; ranked table and download), motif logo, promoter map,
+  promoter usage and normal vs cancer plots, canonical / per-transcript /
+  genomic views (scores and significance), promoter table, site table.
+- **Discover regulators:** ranking, needle and map plots, motif vs ChIP-Atlas
+  plot, targeted maps of the top TFs, table.
+- **Compare promoters:** promoter-specific and shared TFs, promoter table.
 
-- **Gene + TF** — binding sites: promoter map, canonical / per-transcript /
-  genomic plots (score and significance), per-promoter summary, table + CSV.
-  Optional ChIP-Atlas evidence (peak track and black rings; the ring p cut-off
-  re-styles instantly).
-- **Discover regulators** — gene only: ranking, needle and map plots (promoter
-  background or FIMO ranking), optional ChIP-Atlas Target Genes plot, table.
-- **Compare promoters** — gene only: TFs specific to / shared between the gene's
-  promoters, promoter table.
-
-The analysis runs once per **Run**; the text/point-size slider and colour
-controls restyle the plots instantly. JASPAR / HOCOMOCO releases are selectable,
-and a **Log** tab shows the run's console messages (promoter structure, matrices
-used, downloads).
+The analysis runs once per **Run**; text size, colours and the ring cut-off
+restyle the plots instantly. ChIP-Atlas evidence, its cell types and data budget,
+motif database releases and promoter usage are selectable, and a **Log** tab
+shows the console messages of the run.
 
 ---
 
-## Notes
+## A complete example with all settings
 
-- **Alternative promoters.** Many genes have more than one TSS. The default
-  `transcripts = "protein_coding"` often collapses to the main promoter because
-  alternative-promoter isoforms are frequently non-coding biotypes. Use
-  `transcripts = "all"` to include them — the console prints how many distinct
-  TSS exist across all transcripts.
-- **Resilience.** Promoter sequence comes from Ensembl; if Ensembl times out or
-  errors, proMotif automatically falls back to the UCSC REST API.
-- **Significance (FIMO approach).** proMotif scores each site with a log-odds
-  PWM and assigns a p-value exactly as FIMO does: an exact dynamic-programming
-  computation (via `TFMPvalue`) of the probability that a random site drawn from
-  a zero-order, GC-aware background scores at least as high. Because this p-value
-  is monotone in the score, the strongest matches get the smallest p — this is
-  what the significance plots show (`-log10 per-site p`). `qvalue` is the
-  Benjamini-Hochberg FDR over all positions tested, again following FIMO.
-  This is **match significance** (how motif-like the sequence is), not proof of
-  binding: a strong match is not the same as a TF actually binding there, which
-  additionally depends on chromatin, accessibility, cofactors and cell type.
-- **Tuning.** Lower `threshold_frac` (e.g. 0.75) to surface weaker matches;
-  widen `upstream`/`downstream` for a larger window.
-
----
-
-## Examples
+Every argument of the main function, with its default value:
 
 ```r
 library(proMotif)
 
-# 1. Basic run: writes the CSV + PDFs to results/ATP7B_MTF1/
-run_binding_site_analysis("ATP7B", "MTF1")
+r <- run_binding_site_analysis(
+  gene                 = "TFF1",       # HGNC gene symbol (required)
+  tf                   = "ESR1",       # TF symbol; NULL = discovery mode
+  species              = "homo_sapiens",
+  # ---- promoter windows and TSSs
+  upstream             = 2500,         # bp upstream of each TSS
+  downstream           = 500,          # bp downstream of each TSS
+  transcripts          = "protein_coding",   # or "all"
+  tss_source           = "ensembl",    # or "epd" (EPDnew mapped TSSs, human)
+  max_transcripts      = 8,            # max TSS windows scanned
+  scan_unit            = "tss",        # or "promoter"
+  max_overlap          = 0.2,          # window overlap that merges TSSs into one promoter
+  merge_dist           = NULL,         # or a distance in bp (overrides max_overlap)
+  # ---- motifs
+  threshold_frac       = 0.80,         # PWM cutoff, fraction of the matrix score range
+  jaspar_release       = "2026",       # "2024", "2022" also work
+  hocomoco_version     = "v14",        # "v12", "v11" also work
+  hocomoco_species     = "human",      # or "mouse"
+  flank                = 10,           # bases on each side in context_genomic
+  # ---- ChIP-Atlas evidence
+  chip                 = FALSE,        # TRUE to add ChIP-seq evidence
+  chip_threshold       = "05",         # MACS2 q class: "05", "10", "20"
+  chip_cell_pattern    = NULL,         # e.g. "MCF-7|T-47D|breast"
+  chip_max_mb          = 300,          # data budget (MB)
+  chip_mode            = "auto",       # "auto", "assembled", "experiments"
+  chip_max_experiments = Inf,          # cap on experiments
+  chip_sigma           = 50,           # summit-proximity scale (bp)
+  chip_support         = "locus",      # or "all"
+  chip_ring_p          = 1e-3,         # promoter map: ring in-peak sites with p <= this
+  chip_ring_min_exp    = 1,            # promoter map: ... and >= this many experiments
+  # ---- promoter usage (FANTOM5)
+  usage                = FALSE,        # TRUE to add CAGE promoter usage
+  usage_flank          = 500,          # bp around a promoter's TSSs
+  # ---- ranked sites
+  top_sites_min_prob   = 0.5,          # top-sites table: P >= this ...
+  top_sites_min_n      = 10,           # ... and at least this many sites
+  label_top            = 10,           # sites labelled in the top-sites plot
+  # ---- output and plotting
+  out_root             = "results",
+  write_files          = TRUE,
+  color_seed           = NULL,         # a number fixes the database colours
+  base_size            = 12,
+  point_size           = 2.6,
+  top_n                = 20            # discovery mode: TFs shown
+)
 
-# 2. Include alternative promoters and lower the threshold to catch weaker sites
-run_binding_site_analysis("ATP7B", "MTF1",
-                          transcripts = "all", threshold_frac = 0.75)
-
-# 3. A wider promoter window
-run_binding_site_analysis("TERT", "CTCF", upstream = 5000, downstream = 1000)
-
-# 4. A mouse gene (mouse gene coordinates; HOCOMOCO v14 covers mouse TFs)
-run_binding_site_analysis("Ripk3", "Rela",
-                          species = "mus_musculus", hocomoco_species = "mouse")
-
-# 5. Scan once, then restyle without re-querying the databases
-s <- scan_binding_sites("FOXP2", "FOXP1", transcripts = "all")
-p <- plot_binding_sites(s, base_size = 16, point_size = 4)
-p$by_transcript            # show a plot
-head(s$result)             # the hits table
-
-# 6. Keep everything in memory (no files written) and inspect the data
-res <- run_binding_site_analysis("MYC", "MAX", write_files = FALSE)
-res$result[order(res$result$pvalue), ]   # most significant sites first (FIMO p-value)
-
-# 7. Lock the colour scheme so re-runs look identical
-run_binding_site_analysis("SNCA", "GATA1", color_seed = 42)
-
-# 8. Scan several TFs at one locus in a loop
-for (tf in c("SP1", "MAZ", "KLF4"))
-  run_binding_site_analysis("TERT", tf)
-
-# 9. Interactive: point-and-click front end
-launch_app()
-
-# 10. Discovery mode: rank candidate regulators of a gene (no TF given)
-run_binding_site_analysis("SNCA")                 # writes results/SNCA_regulators/
-d <- discover_regulators("ATP7B", top_n = 30)     # just the ranked table
-head(d$top[, c("tf", "pvalue", "qvalue", "n_at_site", "shares_site_with")])
+r$top_sites                # likely binding sites
+r$sites                    # all distinct sites, ranked
+r$result                   # every site row (per window and database)
+r$promoter_summary         # one row per promoter
+r$plots$top_sites          # labelled top-sites plot (and $top_sites_nolabels)
+r$plots$promoter_map       # sites across promoters (-log10 p)
+r$plots$motif_logo         # JASPAR and HOCOMOCO logos
+r$scan                     # the full scan object for re-plotting
 ```
+
+The same analysis step by step, which lets you re-plot without scanning again:
+
+```r
+s <- scan_binding_sites("TFF1", "ESR1", threshold_frac = 0.8, transcripts = "all",
+                        scan_unit = "promoter", tss_source = "epd")
+s <- add_chip_peaks(s, cell_pattern = "MCF-7|T-47D", max_mb = 1000,
+                    mode = "auto", sigma = 50, support = "locus", rep_half = 20)
+s <- add_promoter_usage(s, flank = 500)
+
+top_binding_sites(s, min_prob = 0.6, min_n = 5)
+plot_top_sites(s, top_n = 10, base_size = 14, color_seed = 1)
+plot_top_sites(s, top_n = 0)                                # no labels
+plot_promoter_map(s, chip_ring_p = 1e-4)
+plot_promoter_map(s, y_metric = "probability", label_top = 5, chip_track = FALSE)
+plot_motif_logo(s)
+plot_promoter_usage(s); plot_promoter_usage_cancer(s)
+plot_binding_sites(s)$genomic
+```
+
+---
+
+## Function reference and default values
+
+### Main workflows
+
+| Function | What it does |
+|---|---|
+| `run_binding_site_analysis(gene, tf, ...)` | Scan + ChIP-Atlas + usage + plots + files for one gene and TF; without `tf`, discovery mode. |
+| `run_regulator_discovery(gene, ...)` | Discovery mode with files and targeted follow-up of the top TFs. |
+| `run_promoter_comparison(gene, ...)` | Compare a gene's promoters for promoter-specific TFs, with files. |
+| `launch_app()` | Interactive Shiny app. |
+
+### Building blocks
+
+| Function | What it does |
+|---|---|
+| `scan_binding_sites(gene, tf, ...)` | The scan: sites, coordinates, sequences, p-values, binding probability. |
+| `add_chip_peaks(scan, ...)` | ChIP-Atlas peaks of the TF, ChIP support and replication; re-scores the sites. |
+| `score_binding_sites(scan, weights)` | (Re-)compute binding probabilities, confidence and significance. |
+| `top_binding_sites(scan, min_prob, min_n)` | The likely binding sites. |
+| `add_promoter_usage(scan, ...)` | FANTOM5 CAGE usage of each promoter. |
+| `summarise_promoters(scan)` | One row per promoter. |
+| `motif_matrices(scan)` | The TF's matrices as probabilities with information content. |
+| `discover_regulators(gene, ...)` | Discovery scan: ranked candidate regulators per promoter. |
+| `add_chip_targets(disc, ...)` | ChIP-Atlas Target Genes support for discovery candidates. |
+| `expand_regulators(disc, ...)` | Targeted single-TF scans of the top candidates. |
+| `compare_promoter_regulators(gene, ...)` | TFs that distinguish a gene's promoters. |
+| `list_chip_experiments(tf, ...)` | A TF's ChIP-Atlas experiments, newest first. |
+| `fetch_chip_peaks(tf, chr, from, to, ...)` | ChIP-Atlas peaks of a TF in a region (merged file or budget). |
+| `fetch_chip_peaks_budget(tf, chr, from, to, ...)` | Peaks from per-experiment files within a data budget. |
+| `clear_sequence_cache()` | Remove cached promoter sequences and Ensembl lookups. |
+
+### Plots
+
+| Function | What it shows |
+|---|---|
+| `plot_top_sites(scan, ...)` | Binding probability on the genome, ChIP-seq track, labelled top sites, significance rings. |
+| `plot_promoter_map(scan, ...)` | Sites across all promoters (-log10 p or probability), TSSs, ChIP-seq track and rings. |
+| `plot_motif_logo(scan, ...)` | Sequence logos of the TF's JASPAR and HOCOMOCO matrices. |
+| `plot_binding_sites(scan, ...)` | Canonical, per-transcript and genomic views (scores and significance). |
+| `plot_promoter_usage(scan, ...)` | Sample types where each promoter is used. |
+| `plot_promoter_usage_cancer(scan, ...)` | Promoter usage in normal vs cancer samples. |
+| `plot_promoter_track(gene, ...)` | CAGE signal, promoters and transcripts of a gene. |
+| `plot_regulators(disc, ...)` | Discovery ranking, needle and map plots. |
+| `plot_regulators_chip(disc, ...)` | Discovery: motif vs ChIP-Atlas evidence. |
+| `plot_promoter_regulators(cmp, ...)` | Promoter-specific and shared TFs. |
+
+### Default values
+
+**`scan_binding_sites()`**
+
+| Argument | Default | Meaning |
+|---|---|---|
+| `gene`, `tf` | required | gene and TF symbols |
+| `species` | `"homo_sapiens"` | Ensembl species |
+| `upstream`, `downstream` | `2500`, `500` | window around each TSS (bp) |
+| `threshold_frac` | `0.80` | PWM cutoff (fraction of the matrix score range) |
+| `hocomoco_version`, `hocomoco_species` | `"v14"`, `"human"` | HOCOMOCO release and species |
+| `jaspar_release` | `"2026"` | JASPAR release |
+| `transcripts` | `"protein_coding"` | or `"all"` |
+| `max_transcripts` | `8` | max TSS windows |
+| `merge_dist` | `NULL` | TSS merge distance (bp); `NULL` = from `max_overlap` |
+| `scan_unit` | `"tss"` | or `"promoter"` |
+| `max_overlap` | `0.2` | window overlap that merges TSSs |
+| `tss_source` | `"ensembl"` | or `"epd"` |
+| `flank` | `10` | flanking bases in `context_genomic` |
+
+**`add_chip_peaks()`**
+
+| Argument | Default | Meaning |
+|---|---|---|
+| `threshold` | `"05"` | MACS2 q class (`"05"`, `"10"`, `"20"`) |
+| `cell_pattern` | `NULL` | cell-type regular expression |
+| `max_mb` | `300` | data budget (MB) |
+| `mode` | `"auto"` | `"auto"`, `"assembled"`, `"experiments"` |
+| `max_experiments` | `Inf` | cap on experiments |
+| `sigma` | `50` | summit-proximity scale (bp) |
+| `support` | `"locus"` | or `"all"` |
+| `prior` | `1` | pseudo-count on locus experiments |
+| `rep_half` | `20` | experiments giving half the replication term |
+
+**`run_binding_site_analysis()`**: all arguments of `scan_binding_sites()`, plus
+`chip = FALSE`, `chip_threshold = "05"`, `chip_cell_pattern = NULL`,
+`chip_max_mb = 300`, `chip_mode = "auto"`, `chip_max_experiments = Inf`,
+`chip_sigma = 50`, `chip_support = "locus"`, `chip_ring_p = 1e-3`,
+`chip_ring_min_exp = 1`, `usage = FALSE`, `usage_flank = 500`,
+`top_sites_min_prob = 0.5`, `top_sites_min_n = 10`, `label_top = 10`,
+`out_root = "results"`, `write_files = TRUE`, `color_seed = NULL`,
+`base_size = 12`, `point_size = 2.6`, `top_n = 20`.
+
+**Plots**
+
+| Function | Defaults |
+|---|---|
+| `plot_top_sites()` | `top_n = 10`, `base_size = 12`, `point_size = 2.6`, `color_seed = NULL`, `chip_ring_p = 1`, `chip_track = TRUE` |
+| `plot_promoter_map()` | `base_size = 12`, `point_size = 2.6`, `color_seed = NULL`, `chip_ring_p = 1e-3`, `chip_ring_min_exp = 1`, `facet_regions = TRUE`, `y_metric = "p"`, `label_top = 0`, `chip_track = TRUE` |
+| `plot_motif_logo()` | `base_size = 12`, `revcomp = TRUE` |
+| `plot_binding_sites()` | `base_size = 12`, `point_size = 2.6`, `color_seed = NULL` |
+| `plot_promoter_usage()` | `top_n = 10`, `base_size = 12` |
+| `plot_promoter_usage_cancer()` | `min_n = 3`, `base_size = 12` |
+| `plot_promoter_track()` | `species = "homo_sapiens"`, `tss_source = "epd"`, `transcripts = "all"`, `normal = "primary cells"`, `lineage = NULL`, `cage = TRUE`, `max_transcripts = 30`, `tx_match = 500`, `flank = 2000`, `max_overlap = 0.2`, `base_size = 11`, `dir = NULL` |
+| `plot_regulators()`, `plot_regulators_chip()` | `base_size = 12`, `point_size = 3` |
+| `plot_promoter_regulators()` | `top_n = 30`, `base_size = 12` |
+
+**Other functions**
+
+| Function | Defaults |
+|---|---|
+| `top_binding_sites()` | `min_prob = 0.5`, `min_n = 10` |
+| `score_binding_sites()` | `weights = getOption("promotif.score_weights")` (intercept -3, motif 4, databases 0.5, chip 2.5, replication 2) |
+| `add_promoter_usage()` | `flank = 500`, `dir = NULL`, `min_tpm = 1`, `dominant_frac = 0.6` |
+| `fetch_chip_peaks()` | `species = "homo_sapiens"`, `threshold = "05"`, `cell_pattern = NULL`, `max_mb = 300`, `mode = "auto"`, `max_experiments = Inf` |
+| `fetch_chip_peaks_budget()` | `species = "homo_sapiens"`, `threshold = "05"`, `cell_pattern = NULL`, `budget_mb = 1000`, `max_experiments = Inf`, `batch = 24` |
+| `list_chip_experiments()` | `species = "homo_sapiens"`, `cell_pattern = NULL` |
+| `discover_regulators()` | `species = "homo_sapiens"`, `upstream = 2500`, `downstream = 500`, `collection = "CORE"`, `tax_group = "vertebrates"`, `top_n = 20`, `collapse_site = TRUE`, `site_window = 20`, `use_motifmatchr = TRUE`, `jaspar_db = NULL`, `jaspar_release = "2026"`, `rank_by = "background"`, `promoters = "all"`, `transcripts = "protein_coding"`, `merge_dist = NULL`, `max_overlap = 0.2`, `tss_source = "ensembl"` |
+| `run_regulator_discovery()` | `top_n = 20`, `out_root = "results"`, `write_files = TRUE`, `base_size = 12`, `point_size = 3`, `chip = FALSE`, `chip_distance = 1`, `chip_cell_pattern = NULL`, `chip_max_mb = 300`, `expand_top = 5`, `expand_threshold = 0.8`, `expand_tfs = NULL`, `expand_by = "auto"`, plus `discover_regulators()` arguments |
+| `add_chip_targets()` | `distance = 1`, `cell_pattern = NULL`, `max_mb = 300` |
+| `expand_regulators()` | `tfs = NULL`, `n = 5`, `by = "auto"`, `chip = FALSE`, `threshold_frac = 0.8`, `hocomoco_version = "v14"`, `scan_unit = "promoter"`, `chip_cell_pattern = NULL`, `chip_max_mb = 300` |
+| `compare_promoter_regulators()` | `species = "homo_sapiens"`, `upstream = 2500`, `downstream = 500`, `transcripts = "protein_coding"`, `merge_dist = NULL`, `max_overlap = 0.2`, `present_p = 0.01`, `absent_p = 0.2`, `collection = "CORE"`, `tax_group = "vertebrates"`, `use_motifmatchr = TRUE`, `jaspar_db = NULL`, `jaspar_release = "2026"`, `tss_source = "ensembl"` |
+| `run_promoter_comparison()` | `top_n = 30`, `out_root = "results"`, `write_files = TRUE`, `base_size = 12`, plus `compare_promoter_regulators()` arguments |
+| `launch_app()` | `launch.browser = TRUE` |
+
+---
+
+## Output files
+
+`run_binding_site_analysis(gene, tf)` writes to `results/<GENE>_<TF>/`:
+
+| File | Content |
+|---|---|
+| `<GENE>_<TF>_top_sites.csv` | likely binding sites (P >= 0.5, at least 10), one row per distinct site |
+| `<GENE>_<TF>_all_sites_ranked.csv` | all distinct sites, ranked by binding probability |
+| `<GENE>_<TF>_binding_sites.csv` | every site row (per TSS window and database) |
+| `<GENE>_<TF>_top_sites[_chip].pdf` | top-sites plot with labels (and ChIP-seq track) |
+| `<GENE>_<TF>_top_sites[_chip]_nolabels.pdf` | the same without labels |
+| `<GENE>_<TF>_promoter_map[_chip].pdf` | sites across the promoters (-log10 p) |
+| `<GENE>_<TF>_genomic.pdf` | sites on genomic coordinates (score fraction) |
+| `<GENE>_<TF>_motif_logo.pdf`, `_motif_matrices.csv` | the TF's matrices |
+| `<GENE>_<TF>_promoters.csv` | one row per promoter |
+| `<GENE>_<TF>_promoter_usage.csv`, `_promoter_usage.pdf`, `_promoter_usage_normal_vs_cancer.pdf` | with `usage = TRUE` |
+
+All plots of one run share the same two database colours (`color_seed` fixes
+them across runs).
+
+**Columns of the top-sites and ranked-sites tables**
+
+| Column | Meaning |
+|---|---|
+| `site_id`, `rank` | S1, S2, ... by binding probability |
+| `gene`, `tf`, `chrom` | gene, TF, chromosome (`chr` prefix) |
+| `genomic_start`, `genomic_end`, `motif_strand_genomic` | motif span and strand on the genome (1-based) |
+| `site_center`, `genomic_position` | centre of the site; motif start in gene orientation |
+| `promoter_id`, `in_promoter_windows` | promoter of the best window; all promoter windows containing the site |
+| `transcript_id`, `position_rel_tss` | window the site was scored in; position relative to its TSS (bp) |
+| `databases`, `matrix_ids`, `n_databases_nearby` | databases and matrices calling the site; databases with a site within 10 bp |
+| `site_motif`, `site_genomic`, `context_genomic` | sequence in motif orientation, on the plus strand, and with flanks |
+| `score_frac`, `pvalue`, `qvalue` | PWM score fraction, per-site p-value, BH q-value |
+| `motif_strength`, `db_agreement`, `motif_prob` | motif terms and the motif-only probability |
+| `chip_n_exp`, `chip_support`, `chip_support_all`, `chip_replication`, `chip_summit_dist`, `chip_cell_types` | ChIP-Atlas evidence |
+| `binding_prob`, `confidence`, `score_z`, `significant` | binding probability, class, robust z-score, locus-level significance |
+
+`binding_sites.csv` has one row per window and database with the window-level
+columns (`transcript_id`, `is_canonical`, `transcript_label`, `tss_genomic`,
+`matrix_name`, `score`, `site`) in addition to the above.
+
+Discovery mode writes to `results/<GENE>_regulators/` (`*_candidate_regulators.csv`,
+ranking, map and needle plots, and `top_TFs/<TF>/` follow-up scans); promoter
+comparison writes `*_promoter_regulators.csv` and its plot.
+
+---
+
+## Caching, options and offline use
+
+Everything downloaded is cached under `tools::R_user_dir("proMotif", "cache")`:
+
+| Cache | Content |
+|---|---|
+| `jaspar/`, `hocomoco/` | motif collections (downloaded once) |
+| `chipatlas/` | merged and per-experiment ChIP-Atlas peak files, experiment lists |
+| `promoter_seqs/`, `ensembl_lookup/` | promoter sequences and Ensembl gene annotations |
+| `epd/` | EPDnew TSSs |
+
+After the first run of a gene, scans need no network; `clear_sequence_cache()`
+removes cached sequences and lookups.
+
+| Option | Default | Effect |
+|---|---|---|
+| `promotif.score_weights` | `NULL` | weights of the binding probability, e.g. `list(chip = 1.5)` |
+| `promotif.sig_z` | `2` | robust z-score for locus-level significance |
+| `promotif.sig_min_prob` | `0.5` | minimum probability for significance |
+| `promotif.refresh_cache` | `FALSE` | re-fetch sequences and lookups and overwrite the cache |
+| `promotif.fantom5_dir` | `NULL` | folder with the FANTOM5 promoter data |
+
+---
+
+## Notes and caveats
+
+- **A motif match is not binding.** Whether a TF occupies a site depends on
+  chromatin, TF levels, cofactors and cell type. The binding probability adds
+  public ChIP-seq evidence, but a ChIP-seq peak (~200-500 bp) shows that the TF
+  binds a region in some cell type, not necessarily at the predicted motif or in
+  your cells; restrict `chip_cell_pattern` to relevant cell types.
+- **The binding probability is an evidence score.** Its weights are set by
+  design, not fitted; compare sites within a gene and between genes, and check
+  the evidence columns behind a high score.
+- **Short matrices** reach their maximal motif strength more easily than long
+  ones; a high `motif_strength` from a short matrix is weaker evidence.
+- **HOCOMOCO** matrices were partly trained on public ChIP-seq data, so their
+  agreement with ChIP-Atlas is partly circular.
+- **Mouse.** Scans work for mouse genes (`species = "mus_musculus"`,
+  `hocomoco_species = "mouse"`); ChIP-Atlas peaks and FANTOM5 usage are human
+  only, because ChIP-Atlas mouse coordinates (mm10) differ from Ensembl (GRCm39).
+- **Significance (FIMO approach).** Per-site p-values are exact
+  (dynamic programming via `TFMPvalue`) under a zero-order background with the
+  base composition of the window; q-values are Benjamini-Hochberg over all
+  positions tested.
+- **Resilience.** Ensembl requests are retried with back-off and fall back to
+  the UCSC API; cached results are used whenever available.
+- **Tuning.** Lower `threshold_frac` (e.g. 0.75) to include weaker matches;
+  widen `upstream` to reach distal elements (e.g. 4500 bp for the KLK3 upstream
+  enhancer).
+
+## Citation
+
+Ozcan SC. *proMotif enables promoter-resolved transcription factor binding
+analysis of alternative promoter usage.* (in preparation)
+
+## License
+
+MIT, see `LICENSE`.

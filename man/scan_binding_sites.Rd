@@ -18,7 +18,9 @@ scan_binding_sites(
   max_transcripts = 8,
   merge_dist = NULL,
   scan_unit = c("tss", "promoter"),
-  max_overlap = 0.2
+  max_overlap = 0.2,
+  tss_source = c("ensembl", "epd"),
+  flank = 10
 )
 }
 \arguments{
@@ -52,6 +54,10 @@ TSS is kept first, then one TSS per promoter.}
 
 \item{max_overlap}{Window overlap fraction at or above which TSSs belong to
 the same promoter (default 0.2).}
+
+\item{tss_source}{Where TSSs come from: `"ensembl"` (transcript starts, default) or `"epd"` (EPDnew experimentally mapped TSSs; human).}
+
+\item{flank}{Bases reported on each side of a site in `context_genomic` (default 10).}
 }
 \value{
 A list with \code{result} (data.frame of predicted sites, including

@@ -34,6 +34,8 @@
 #'   \code{"promoter"} (one window per promoter).
 #' @param max_overlap Window overlap fraction at or above which TSSs belong to
 #'   the same promoter (default 0.2).
+#' @param tss_source Where TSSs come from: `"ensembl"` (transcript starts, default) or `"epd"` (EPDnew experimentally mapped TSSs; human).
+#' @param flank Bases reported on each side of a site in `context_genomic` (default 10).
 #' @return A list with \code{result} (data.frame of predicted sites, including
 #'   \code{pvalue}, \code{qvalue}, \code{promoter_id}, \code{in_promoter_windows}),
 #'   \code{reps} (scanned representative transcripts), \code{tss_all} (every
@@ -58,9 +60,11 @@ scan_binding_sites <- function(gene, tf,
                                max_transcripts  = 8,
                                merge_dist       = NULL,
                                scan_unit        = c("tss", "promoter"),
-                               max_overlap      = 0.2) {
+                               max_overlap      = 0.2,
+                               tss_source       = c("ensembl", "epd"),
+                               flank            = 10) {
   transcripts <- match.arg(transcripts)
-  scan_unit   <- match.arg(scan_unit)
+  scan_unit   <- match.arg(scan_unit); tss_source <- match.arg(tss_source)
   message("== ", gene, " / ", tf, " ==")
 
   js <- .ensembl_lookup_expand(gene, species)
@@ -78,6 +82,12 @@ scan_binding_sites <- function(gene, tf,
   if (transcripts == "protein_coding" &&
       any(txdf$biotype == "protein_coding", na.rm = TRUE))
     txdf <- txdf[txdf$biotype == "protein_coding", , drop = FALSE]
+  ## experimentally mapped TSSs (EPDnew) instead of annotated transcript starts
+  use_epd <- FALSE
+  if (tss_source == "epd") {
+    gt <- .gene_transcripts(gene, species, transcripts, "epd")
+    if (gt$source == "epd") { txdf <- gt$txdf; use_epd <- TRUE }
+  }
 
   ## group nearby TSSs into promoters P1, P2, ... (section 5). scan_unit = "tss"
   ## scans every distinct TSS (original behaviour); "promoter" scans one window
@@ -136,16 +146,7 @@ scan_binding_sites <- function(gene, tf,
     gene_info <- list(name = gene, chr = gene_chr, strand = gene_strand,
                       tss = rp$tss, start = rp$start, end = rp$end,
                       species = species, transcript_id = rp$transcript_id)
-    pinfo <- .with_retry(
-      function() GLproxScape::fetch_promoter_seq(gene_info, upstream = upstream,
-                                    downstream = downstream),
-      tries = 2, waits = c(3, 8),
-      what = paste("Ensembl seq", rp$transcript_id))
-    if (is.null(pinfo)) {
-      pinfo <- .fetch_seq_ucsc(gene_chr, rp$tss, gene_strand,
-                               upstream, downstream, species)
-      if (!is.null(pinfo)) message("  used UCSC fallback for ", rp$transcript_id)
-    }
+    pinfo <- .promoter_seq(gene_info, upstream, downstream, species, ensembl = !use_epd)
     if (is.null(pinfo)) {
       message("  could not fetch sequence for ", rp$transcript_id,
               " (Ensembl and UCSC both failed) - skipping"); next
@@ -153,13 +154,39 @@ scan_binding_sites <- function(gene, tf,
     bg <- .seq_bg(pinfo$seq)
     for (db in names(pwms)) {
       if (is.null(pwms[[db]])) next
-      df <- .scan_promoter(pinfo, pwms[[db]], threshold_frac)
+      df <- .scan_promoter(pinfo, pwms[[db]], threshold_frac, flank)
       if (nrow(df) == 0) next
-      n_pos <- 2L * max(1L, nchar(pinfo$seq) - pwms[[db]]$len + 1L)
+      L <- pwms[[db]]$len
+      n_pos <- 2L * max(1L, nchar(pinfo$seq) - L + 1L)
       df$pvalue <- .site_pvalues(df$score, pwms[[db]]$pwm, bg)
+      ## p of a perfect match to this matrix in this window: the scale for motif
+      ## strength (short motifs such as GATA cannot reach the p of long ones)
+      df$pvalue_best <- .fimo_pvalue(pwms[[db]]$pwm, sum(apply(pwms[[db]]$pwm, 2, max)), bg)
       df$qvalue <- .bh_qvalue(df$pvalue, n_pos)  # FIMO-style BH/FDR over positions tested
       df$genomic_position <- if (gene_strand == 1) rp$tss + df$position
                              else rp$tss - df$position
+      ## exact genomic span of the motif (1-based, + strand coordinates), the
+      ## motif's strand on the genome and its sequence three ways:
+      ##   site            - as in the promoter sequence (gene orientation; unchanged)
+      ##   site_motif      - in the motif's own orientation (reads like the logo)
+      ##   site_genomic    - on the genomic + strand (paste into a genome browser)
+      ##   context_genomic - site_genomic with `flank` bp each side in lower case
+      if (gene_strand == 1) {
+        df$genomic_start <- df$genomic_position
+        df$genomic_end   <- df$genomic_position + L - 1
+        df$motif_strand_genomic <- df$strand
+        df$site_genomic    <- df$site
+        df$context_genomic <- df$context
+      } else {
+        df$genomic_start <- df$genomic_position - L + 1
+        df$genomic_end   <- df$genomic_position
+        df$motif_strand_genomic <- ifelse(df$strand == "+", "-", "+")
+        df$site_genomic    <- .revcomp(df$site)
+        df$context_genomic <- .revcomp(df$context)
+      }
+      df$site_motif  <- ifelse(df$strand == "+", df$site, .revcomp(df$site))
+      df$site_center <- (df$genomic_start + df$genomic_end) / 2
+      df$context <- NULL
       rows[[paste(rp$transcript_id, db)]] <- cbind(
         transcript_id = rp$transcript_id, promoter_id = rp$promoter_id,
         is_canonical = rp$is_canonical, transcript_label = rp$label, chr = gene_chr, gene_strand = gene_strand,
@@ -183,14 +210,16 @@ scan_binding_sites <- function(gene, tf,
   tss_all$scanned <- tss_all$tss %in% reps$tss
   rownames(tss_all) <- NULL
 
-  list(result = result, reps = reps, tss_all = tss_all,
+  scan <- list(result = result, reps = reps, tss_all = tss_all,
        promoters = prom$promoters, promoter_overlap = prom$overlap,
-       meta = list(gene = gene, tf = tf, species = species, chr = gene_chr,
+       pwms = Filter(Negate(is.null), pwms),
+       meta = list(gene = gene, tf = tf, species = species, tss_source = if (use_epd) "epd" else "ensembl", chr = gene_chr,
                    strand = gene_strand, upstream = upstream, downstream = downstream,
                    threshold_frac = threshold_frac, n_sites = nrow(result),
                    n_facets = nrow(reps), merge_dist = merge_dist,
                    scan_unit = scan_unit, max_overlap = max_overlap,
                    jaspar_release = jaspar_release, hocomoco_version = hocomoco_version,
                    n_promoters = nrow(prom$promoters),
-                   n_regions = length(unique(prom$promoters$region))))
+                   n_regions = length(unique(prom$promoters$region)), flank = flank))
+  score_binding_sites(scan)                  # motif probability (ChIP added later)
 }

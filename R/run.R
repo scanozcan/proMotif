@@ -30,6 +30,15 @@
 #' @details If \code{tf} is \code{NULL} or empty, the function switches to
 #'   discovery mode and calls \code{\link{run_regulator_discovery}} to rank the
 #'   gene's candidate regulators instead of scanning one named TF.
+#' @param chip_mode `"auto"` (default): the merged ChIP-Atlas file if it is within `chip_max_mb`, else the newest per-experiment files up to `chip_max_mb`; `"assembled"`: merged file only; `"experiments"`: per-experiment files only.
+#' @param chip_max_experiments Maximum number of ChIP-Atlas experiments (default `Inf`).
+#' @param chip_sigma Summit-proximity scale in bp for ChIP support (default 50).
+#' @param chip_support Normalisation of ChIP support: `"locus"` (experiments binding the locus, default) or `"all"` (all queried experiments).
+#' @param tss_source `"ensembl"` (default) or `"epd"`; see [scan_binding_sites()].
+#' @param flank Bases on each side of a site in the sequence context (default 10).
+#' @param top_sites_min_prob Binding probability for the top-sites table (default 0.5).
+#' @param top_sites_min_n Minimum number of sites in the top-sites table (default 10).
+#' @param label_top Number of sites labelled in the top-sites plot (default 10).
 #' @return Invisibly, a list with \code{result} (data.frame), \code{plots}
 #'   (the ggplots, or \code{NULL} if no sites), \code{meta}, \code{promoters},
 #'   \code{promoter_summary}, \code{chip} and \code{usage}.
@@ -64,10 +73,23 @@ run_binding_site_analysis <- function(gene, tf = NULL,
                                       chip_threshold   = "05",
                                       chip_cell_pattern = NULL,
                                       chip_max_mb      = 300,
+                                      chip_mode        = c("auto", "assembled", "experiments"),
+                                      chip_max_experiments = Inf,
+                                      chip_sigma       = 50,
+                                      chip_support     = c("locus", "all"),
                                       chip_ring_p      = 1e-3,
                                       chip_ring_min_exp = 1,
                                       usage            = FALSE,
-                                      usage_flank      = 500) {
+                                      usage_flank      = 500,
+                                      tss_source       = c("ensembl", "epd"),
+                                      flank            = 10,
+                                      top_sites_min_prob = 0.5,
+                                      top_sites_min_n  = 10,
+                                      label_top        = 10) {
+  chip_mode <- match.arg(chip_mode); tss_source <- match.arg(tss_source)
+  ## one colour seed per run, so every plot of this run uses the same two
+  ## database colours (color_seed = a number makes them reproducible across runs)
+  if (is.null(color_seed)) color_seed <- sample.int(1e6, 1)
   transcripts <- match.arg(transcripts)
   scan_unit   <- match.arg(scan_unit)
 
@@ -86,7 +108,8 @@ run_binding_site_analysis <- function(gene, tf = NULL,
   scan <- scan_binding_sites(gene, tf, species, upstream, downstream, threshold_frac,
                              hocomoco_version, hocomoco_species, transcripts, max_transcripts,
                              merge_dist = merge_dist, scan_unit = scan_unit,
-                             max_overlap = max_overlap, jaspar_release = jaspar_release)
+                             max_overlap = max_overlap, jaspar_release = jaspar_release,
+                             tss_source = tss_source, flank = flank)
   out_dir  <- file.path(out_root, paste0(gene, "_", tf))
   csv_path <- file.path(out_dir, sprintf("%s_%s_binding_sites.csv", gene, tf))
 
@@ -102,52 +125,39 @@ run_binding_site_analysis <- function(gene, tf = NULL,
 
   if (isTRUE(chip))
     scan <- add_chip_peaks(scan, threshold = chip_threshold,
-                           cell_pattern = chip_cell_pattern, max_mb = chip_max_mb)
+                           cell_pattern = chip_cell_pattern, max_mb = chip_max_mb,
+                           mode = chip_mode, max_experiments = chip_max_experiments,
+                           sigma = chip_sigma, support = match.arg(chip_support))
+
   if (isTRUE(usage)) scan <- add_promoter_usage(scan, flank = usage_flank)
+  top_sites <- top_binding_sites(scan, min_prob = top_sites_min_prob, min_n = top_sites_min_n)
 
   plots <- plot_binding_sites(scan, base_size = base_size, point_size = point_size,
                               color_seed = color_seed)
-  plots$promoter_map <- plot_promoter_map(scan, base_size = base_size,
-                                          point_size = point_size, color_seed = color_seed,
-                                          chip_ring_p = chip_ring_p,
-                                          chip_ring_min_exp = chip_ring_min_exp)
   if (!is.null(scan$usage)) {
     plots$usage        <- plot_promoter_usage(scan, base_size = base_size)
     plots$usage_cancer <- plot_promoter_usage_cancer(scan, base_size = base_size)
   }
+  plots$promoter_map <- plot_promoter_map(scan, base_size = base_size,
+                                          point_size = point_size, color_seed = color_seed,
+                                          chip_ring_p = chip_ring_p,
+                                          chip_ring_min_exp = chip_ring_min_exp)
+  plots$top_sites <- plot_top_sites(scan, top_n = label_top, base_size = base_size,
+                                    point_size = point_size, color_seed = color_seed)
+  plots$top_sites_nolabels <- plot_top_sites(scan, top_n = 0, base_size = base_size,
+                                             point_size = point_size, color_seed = color_seed)
+  plots$motif_logo <- plot_motif_logo(scan, base_size = base_size)
   psum <- summarise_promoters(scan)
 
   if (write_files) {
     dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
     write.csv(scan$result, csv_path, row.names = FALSE)
     message("Wrote: ", csv_path, "  (", nrow(scan$result), " site rows)")
-    if (!is.null(plots$canonical))
-      ggsave(file.path(out_dir, sprintf("%s_%s_canonical.pdf", gene, tf)),
-             plots$canonical, width = 9, height = 4.5)
-    ggsave(file.path(out_dir, sprintf("%s_%s_by_transcript.pdf", gene, tf)),
-           plots$by_transcript, width = 9,
-           height = max(4, 1.4 * scan$meta$n_facets + 1.2), limitsize = FALSE)
     ggsave(file.path(out_dir, sprintf("%s_%s_genomic.pdf", gene, tf)),
            plots$genomic, width = 10, height = 5)
-    if (!is.null(plots$canonical_sig))
-      ggsave(file.path(out_dir, sprintf("%s_%s_canonical_significance.pdf", gene, tf)),
-             plots$canonical_sig, width = 9, height = 4.5)
-    if (!is.null(plots$by_transcript_sig))
-      ggsave(file.path(out_dir, sprintf("%s_%s_by_transcript_significance.pdf", gene, tf)),
-             plots$by_transcript_sig, width = 9,
-             height = max(4, 1.4 * scan$meta$n_facets + 1.2), limitsize = FALSE)
-    if (!is.null(plots$genomic_sig))
-      ggsave(file.path(out_dir, sprintf("%s_%s_genomic_significance.pdf", gene, tf)),
-             plots$genomic_sig, width = 10, height = 5)
     if (!is.null(psum))
       write.csv(psum, file.path(out_dir, sprintf("%s_%s_promoters.csv", gene, tf)),
                 row.names = FALSE)
-    if (!is.null(plots$promoter_map)) {
-      with_chip <- !is.null(scan$chip) && nrow(scan$chip$peaks) > 0
-      ggsave(file.path(out_dir, sprintf("%s_%s_promoter_map%s.pdf", gene, tf,
-                                        if (with_chip) "_chip" else "")),
-             plots$promoter_map, width = 11, height = if (with_chip) 7.5 else 6)
-    }
     if (!is.null(scan$usage)) {
       write.csv(scan$usage$table, file.path(out_dir, sprintf("%s_%s_promoter_usage.csv", gene, tf)),
                 row.names = FALSE)
@@ -160,10 +170,42 @@ run_binding_site_analysis <- function(gene, tf = NULL,
                plots$usage_cancer, width = 12,
                height = 2.6 * length(unique(plots$usage_cancer$data$panel)) + 1.8)
     }
+    with_chip <- !is.null(scan$chip) && nrow(scan$chip$peaks) > 0
+    if (!is.null(plots$promoter_map))
+      ggsave(file.path(out_dir, sprintf("%s_%s_promoter_map%s.pdf", gene, tf,
+                                        if (with_chip) "_chip" else "")),
+             plots$promoter_map, width = 11, height = if (with_chip) 7.5 else 6)
+    ## ranked likely binding sites: exact coordinates, sequences, probability
+    if (!is.null(top_sites) && nrow(top_sites)) {
+      write.csv(top_sites, file.path(out_dir, sprintf("%s_%s_top_sites.csv", gene, tf)),
+                row.names = FALSE)
+      write.csv(scan$sites, file.path(out_dir, sprintf("%s_%s_all_sites_ranked.csv", gene, tf)),
+                row.names = FALSE)
+      message(sprintf("Wrote: %s_%s_top_sites.csv (%d site(s) with binding probability >= %.2f or top %d; %d high, %d medium)",
+                      gene, tf, nrow(top_sites), top_sites_min_prob, top_sites_min_n,
+                      sum(top_sites$confidence == "high", na.rm = TRUE),
+                      sum(top_sites$confidence == "medium", na.rm = TRUE)))
+    }
+    if (!is.null(plots$top_sites))
+      ggsave(file.path(out_dir, sprintf("%s_%s_top_sites%s.pdf", gene, tf,
+                                        if (with_chip) "_chip" else "")),
+             plots$top_sites, width = 12, height = if (with_chip) 8 else 6.5)
+    if (!is.null(plots$top_sites_nolabels))
+      ggsave(file.path(out_dir, sprintf("%s_%s_top_sites%s_nolabels.pdf", gene, tf,
+                                        if (with_chip) "_chip" else "")),
+             plots$top_sites_nolabels, width = 12, height = if (with_chip) 8 else 6.5)
+    if (!is.null(plots$motif_logo)) {
+      ggsave(file.path(out_dir, sprintf("%s_%s_motif_logo.pdf", gene, tf)), plots$motif_logo,
+             width = max(5, 0.45 * max(vapply(scan$pwms, `[[`, numeric(1), "len")) + 2),
+             height = 1.6 * 2 * length(scan$pwms) + 1)
+      write.csv(motif_matrices(scan), file.path(out_dir, sprintf("%s_%s_motif_matrices.csv", gene, tf)),
+                row.names = FALSE)
+    }
     message("Wrote plots to: ", out_dir)
   }
   message("Done.")
-  invisible(list(result = scan$result, plots = plots, meta = scan$meta,
+  invisible(list(result = scan$result, sites = scan$sites, top_sites = top_sites,
+                 plots = plots, meta = scan$meta,
                  promoters = scan$promoters, promoter_summary = psum, chip = scan$chip,
-                 usage = scan$usage))
+                 usage = scan$usage, scan = scan))
 }

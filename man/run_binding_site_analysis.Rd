@@ -29,10 +29,19 @@ run_binding_site_analysis(
   chip_threshold = "05",
   chip_cell_pattern = NULL,
   chip_max_mb = 300,
+  chip_mode = c("auto", "assembled", "experiments"),
+  chip_max_experiments = Inf,
+  chip_sigma = 50,
+  chip_support = c("locus", "all"),
   chip_ring_p = 0.001,
   chip_ring_min_exp = 1,
   usage = FALSE,
-  usage_flank = 500
+  usage_flank = 500,
+  tss_source = c("ensembl", "epd"),
+  flank = 10,
+  top_sites_min_prob = 0.5,
+  top_sites_min_n = 10,
+  label_top = 10
 )
 }
 \arguments{
@@ -90,6 +99,14 @@ experiments to cell types (e.g. \code{"HepG2|liver"}).}
 
 \item{chip_max_mb}{Skip ChIP-Atlas files larger than this (MB; default 300).}
 
+\item{chip_mode}{`"auto"` (default): the merged ChIP-Atlas file if it is within `chip_max_mb`, else the newest per-experiment files up to `chip_max_mb`; `"assembled"`: merged file only; `"experiments"`: per-experiment files only.}
+
+\item{chip_max_experiments}{Maximum number of ChIP-Atlas experiments (default `Inf`).}
+
+\item{chip_sigma}{Summit-proximity scale in bp for ChIP support (default 50).}
+
+\item{chip_support}{Normalisation of ChIP support: `"locus"` (experiments binding the locus, default) or `"all"` (all queried experiments).}
+
 \item{chip_ring_p, chip_ring_min_exp}{Which in-peak sites get a black ring on
 the promoter map (see \code{\link{plot_promoter_map}}).}
 
@@ -98,6 +115,16 @@ normal vs cancer comparison (default \code{FALSE}; needs the FANTOM5
 folder, see \code{\link{add_promoter_usage}}).}
 
 \item{usage_flank}{Window (bp) around each promoter's TSSs for CAGE peaks.}
+
+\item{tss_source}{`"ensembl"` (default) or `"epd"`; see [scan_binding_sites()].}
+
+\item{flank}{Bases on each side of a site in the sequence context (default 10).}
+
+\item{top_sites_min_prob}{Binding probability for the top-sites table (default 0.5).}
+
+\item{top_sites_min_n}{Minimum number of sites in the top-sites table (default 10).}
+
+\item{label_top}{Number of sites labelled in the top-sites plot (default 10).}
 }
 \value{
 Invisibly, a list with \code{result} (data.frame), \code{plots}

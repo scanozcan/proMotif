@@ -14,7 +14,7 @@ add_chip_targets(disc, distance = 1, cell_pattern = NULL, max_mb = 300)
 \item{cell_pattern}{Optional regular expression on the sample annotation
 (e.g. \code{"HepG2|liver"}); spaces, "-" and "_" are ignored.}
 
-\item{max_mb}{Skip files larger than this many MB (default 300).}
+\item{max_mb}{Skip Target Genes files larger than this many MB (default 300).}
 }
 \value{
 \code{disc} with \code{chip_*} columns added to \code{top} and

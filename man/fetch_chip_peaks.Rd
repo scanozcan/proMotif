@@ -12,7 +12,9 @@ fetch_chip_peaks(
   species = "homo_sapiens",
   threshold = "05",
   cell_pattern = NULL,
-  max_mb = 300
+  max_mb = 300,
+  mode = c("auto", "assembled", "experiments"),
+  max_experiments = Inf
 )
 }
 \arguments{
@@ -28,14 +30,32 @@ fetch_chip_peaks(
 \item{cell_pattern}{Optional regular expression on the sample annotation
 (e.g. \code{"HepG2|liver"}); spaces, "-" and "_" are ignored.}
 
-\item{max_mb}{Skip files larger than this many MB (default 300).}
+\item{max_mb}{Data budget in MB (default 300); see Details.}
+
+\item{mode}{`"auto"` (default), `"assembled"` or `"experiments"`; see Details.}
+
+\item{max_experiments}{Maximum number of per-experiment files (default `Inf`;
+a finite value switches to per-experiment files).}
 }
 \value{
-\code{list(peaks, available)}, or \code{NULL} if ChIP-Atlas was not
-  reachable or the file was too large.
+A list with \code{peaks} (data frame with \code{summit}),
+  \code{available}, \code{mode}, \code{n_total} and \code{n_used}
+  (experiments), or \code{NULL} if ChIP-Atlas was not reachable.
 }
 \description{
-Downloads (once; cached under \code{tools::R_user_dir("proMotif", "cache")})
-the ChIP-Atlas file merging all ChIP-seq experiments for \code{tf} and
-returns the peaks overlapping \code{chr:from-to}. Human (hg38) only.
+Returns the ChIP-Atlas peaks of \code{tf} overlapping \code{chr:from-to}.
+Files are downloaded once and cached under
+\code{tools::R_user_dir("proMotif", "cache")}. Human (hg38) only.
+}
+\details{
+\code{max_mb} is a data budget. With \code{mode = "auto"}, the
+  ChIP-Atlas file merging all experiments of the TF is used if it is cached
+  or not larger than \code{max_mb}; otherwise the TF's experiments are
+  listed (\code{\link{list_chip_experiments}}), filtered by
+  \code{cell_pattern}, ordered newest first, and per-experiment peak files
+  are used until \code{max_mb} is reached
+  (\code{\link{fetch_chip_peaks_budget}}). Per-experiment files also give the
+  MACS2 summit; merged files give the peak interval only.
+  \code{mode = "assembled"} uses only the merged file (skipped if larger than
+  \code{max_mb}); \code{mode = "experiments"} always uses per-experiment files.
 }
