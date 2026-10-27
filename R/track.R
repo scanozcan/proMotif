@@ -23,7 +23,8 @@
 #'   replaces the normal / cancer comparison, e.g.
 #'   `list("cell types using P2" = c(...), "other primary cells" = c(...))`.
 #'   Sample types may be given as `"sample type"` or `"sample type [category]"`.
-#'   Default `NULL` (normal vs cancer).
+#'   The first group is drawn on top; the second is the reference, so promoter
+#'   labels read second -> first (TPM and share). Default `NULL` (normal vs cancer).
 #' @return A patchwork plot; `attr(p, "height")` gives a suggested page height
 #'   and `attr(p, "data")` the drawn promoters, transcripts, exons and peaks.
 #' @export
@@ -114,11 +115,15 @@ plot_promoter_track <- function(gene, species = "homo_sapiens", tss_source = c("
           if (length(hit)) prom$promoter_id[hit[1]] else "none"
         }, character(1))
         tot <- c(A = sum(pk$A[pk$promoter_id != "none"]), B = sum(pk$B[pk$promoter_id != "none"]))
+        ## arrows read reference -> compared group: normal -> cancer by default; with
+        ## `groups`, the second (reference) group -> the first (e.g. all other cells ->
+        ## the specific cell types), so a promoter used more in the first group rises
+        fr <- if (is.null(groups)) "A" else "B"; to <- setdiff(c("A", "B"), fr)
         for (p in prom$promoter_id)
           share_lab[p] <- sprintf("  %.1f -> %.1f TPM, share %.0f%% -> %.0f%%",
-                                  sum(pk$A[pk$promoter_id == p]), sum(pk$B[pk$promoter_id == p]),
-                                  100 * sum(pk$A[pk$promoter_id == p]) / max(tot["A"], 1e-9),
-                                  100 * sum(pk$B[pk$promoter_id == p]) / max(tot["B"], 1e-9))
+                                  sum(pk[[fr]][pk$promoter_id == p]), sum(pk[[to]][pk$promoter_id == p]),
+                                  100 * sum(pk[[fr]][pk$promoter_id == p]) / max(tot[fr], 1e-9),
+                                  100 * sum(pk[[to]][pk$promoter_id == p]) / max(tot[to], 1e-9))
         attr(pk, "n_types") <- c(A = sum(grp == gnames[1], na.rm = TRUE), B = sum(grp == gnames[2], na.rm = TRUE))
       }
     }
@@ -152,7 +157,8 @@ plot_promoter_track <- function(gene, species = "homo_sapiens", tss_source = c("
           sprintf("FANTOM5 CAGE peaks; normal = %s%s; cancer = cancer cell lines | promoter labels: summed mean TPM and share, normal -> cancer",
                   paste(normal, collapse = " + "),
                   if (!is.null(lineage)) paste0("; lineage: ", paste(lineage, collapse = ", ")) else "")
-          else "FANTOM5 CAGE peaks, mean over sample types | promoter labels: summed mean TPM and share, top -> bottom panel") +
+          else sprintf("FANTOM5 CAGE peaks, mean over sample types\npromoter labels: summed mean TPM and share, %s -> %s",
+                       gnames[2], gnames[1])) +
       th + theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
   }
   arr <- 0.025 * span * strand

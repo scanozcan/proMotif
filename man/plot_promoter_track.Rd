@@ -52,7 +52,8 @@ plot_promoter_track(
 replaces the normal / cancer comparison, e.g.
 `list("cell types using P2" = c(...), "other primary cells" = c(...))`.
 Sample types may be given as `"sample type"` or `"sample type [category]"`.
-Default `NULL` (normal vs cancer).}
+The first group is drawn on top; the second is the reference, so promoter
+labels read second -> first (TPM and share). Default `NULL` (normal vs cancer).}
 }
 \value{
 A patchwork plot; `attr(p, "height")` gives a suggested page height
