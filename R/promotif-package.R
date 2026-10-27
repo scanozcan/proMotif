@@ -126,6 +126,26 @@ utils::globalVariables(c("base", "biotype", "canonical", "end", "grp", "hj", "ly
       if (k < 5) Sys.sleep(wait)
     }
   }
+  ## renamed genes (e.g. MARCH1 -> MARCHF1): resolve the old symbol through the
+  ## Ensembl xref/synonym index, then look the gene up by its stable ID
+  if (is.null(js)) {
+    xr <- tryCatch(httr::GET(paste0("https://rest.ensembl.org/xrefs/symbol/", species, "/", gene),
+                             query = list(object_type = "gene"), httr::accept_json(), httr::timeout(30)),
+                   error = function(e) NULL)
+    ids <- if (!is.null(xr) && httr::status_code(xr) == 200)
+      vapply(httr::content(xr, as = "parsed", type = "application/json"), function(x) x$id %||% NA_character_, "")
+      else character(0)
+    ids <- ids[grepl("^ENS[A-Z]*G[0-9]+$", ids)]
+    if (length(ids)) {
+      r2 <- tryCatch(httr::GET(paste0("https://rest.ensembl.org/lookup/id/", ids[1]),
+                               query = list(expand = 1), httr::accept_json(), httr::timeout(30)),
+                     error = function(e) NULL)
+      if (!is.null(r2) && httr::status_code(r2) == 200) {
+        js <- httr::content(r2, as = "parsed", type = "application/json")
+        message("  ", gene, " is ", js$display_name %||% ids[1], " in Ensembl (", ids[1], ")")
+      }
+    }
+  }
   if (is.null(js)) stop("Ensembl lookup failed for ", gene, " (", species, ")")
   saveRDS(js, fc)
   .f5_env[[key]] <- js
@@ -138,6 +158,27 @@ utils::globalVariables(c("base", "biotype", "canonical", "end", "grp", "hj", "ly
                     drosophila_melanogaster = "dm6",
                     caenorhabditis_elegans = "ce11", gallus_gallus = "galGal6",
                     saccharomyces_cerevisiae = "sacCer3")
+
+## Promoter window from the Ensembl REST region endpoint (any TSS, e.g. EPDnew;
+## strand -1 returns the reverse complement, i.e. gene orientation).
+.fetch_seq_ensembl_region <- function(chr, tss, strand, upstream, downstream, species) {
+  if (strand == 1) { ss <- max(1, tss - upstream);   se <- tss + downstream }
+  else             { ss <- max(1, tss - downstream); se <- tss + upstream }
+  url <- sprintf("https://rest.ensembl.org/sequence/region/%s/%s:%d..%d:%d",
+                 species, sub("^chr", "", chr), as.integer(ss), as.integer(se), as.integer(strand))
+  for (k in 1:3) {
+    res <- tryCatch(httr::GET(url, query = list(`content-type` = "text/plain"), httr::timeout(30)),
+                    error = function(e) NULL)
+    if (!is.null(res) && httr::status_code(res) == 200) {
+      dna <- toupper(gsub("[^A-Za-z]", "", httr::content(res, as = "text", encoding = "UTF-8")))
+      if (nchar(dna) >= 10)
+        return(list(seq = dna, tss_offset = upstream, seq_start = ss, seq_end = se, strand = strand))
+    }
+    if (!is.null(res) && httr::status_code(res) %in% c(400L, 404L)) break
+    Sys.sleep(2 * k)
+  }
+  NULL
+}
 
 ## Fallback promoter-sequence fetch from the UCSC REST API.
 .fetch_seq_ucsc <- function(chr, tss, strand, upstream, downstream, species) {
@@ -367,8 +408,9 @@ utils::globalVariables(c("base", "biotype", "canonical", "end", "grp", "hj", "ly
   tryCatch(readRDS(f), error = function(e) NULL)
 }
 
-## Promoter sequence for one TSS window: disk cache -> Ensembl (unless
-## ensembl = FALSE, e.g. EPDnew TSSs) -> UCSC. Returns NULL if all fail.
+## Promoter sequence for one TSS window: disk cache -> Ensembl transcript
+## (unless ensembl = FALSE, e.g. EPDnew TSSs) -> Ensembl region -> UCSC.
+## Returns NULL if all fail.
 .promoter_seq <- function(gene_info, upstream, downstream, species, ensembl = TRUE,
                           label = gene_info$transcript_id %||% "") {
   f <- .seq_cache_file("promoter_seqs", species, gene_info$chr, gene_info$tss,
@@ -379,6 +421,9 @@ utils::globalVariables(c("base", "biotype", "canonical", "end", "grp", "hj", "ly
     pinfo <- .with_retry(function() GLproxScape::fetch_promoter_seq(gene_info, upstream = upstream,
                                                        downstream = downstream),
                          tries = 2, waits = c(3, 8), what = paste("Ensembl seq", label))
+  if (is.null(pinfo))
+    pinfo <- .fetch_seq_ensembl_region(gene_info$chr, gene_info$tss, gene_info$strand,
+                                       upstream, downstream, species)
   if (is.null(pinfo)) {
     pinfo <- .fetch_seq_ucsc(gene_info$chr, gene_info$tss, gene_info$strand,
                              upstream, downstream, species)

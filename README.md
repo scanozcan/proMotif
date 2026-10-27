@@ -121,10 +121,12 @@ launch_app()
 For a gene and a TF, `scan_binding_sites()`:
 
 1. looks up the gene's transcripts in Ensembl (or its experimentally mapped TSSs
-   in EPDnew, `tss_source = "epd"`);
+   in EPDnew, `tss_source = "epd"`); renamed genes are resolved through the
+   Ensembl synonym index (e.g. MARCH1 is found as MARCHF1);
 2. groups TSSs into promoters and takes a window around each TSS
    (`upstream = 2500`, `downstream = 500` bp);
-3. fetches the window sequence from Ensembl (UCSC as fallback);
+3. fetches the window sequence from Ensembl (transcript, then genomic region;
+   UCSC as a last fallback);
 4. scans both strands with the TF's JASPAR and HOCOMOCO matrices and keeps
    positions scoring at least `threshold_frac` (0.80) of the matrix score range;
 5. gives each site a FIMO-style per-site p-value (exact, with the window's base
@@ -323,6 +325,13 @@ r$plots$usage_cancer   # each promoter, normal vs cancer, lineage-matched
 
 p <- plot_promoter_track("TP73")   # CAGE normal vs cancer, promoters, transcripts
 ggplot2::ggsave("TP73_track.pdf", p, width = 11, height = attr(p, "height"))
+
+# any two groups of sample types, e.g. the primary cells that use P1 vs all others
+tab  <- r$scan$usage$table
+prim <- tab[tab$category == "primary cells", ]
+p1   <- prim$sample_type[prim$dominant == "P1"]
+p <- plot_promoter_track("TP73", groups = list("cells using P1" = p1,
+                                               "other primary cells" = setdiff(prim$sample_type, p1)))
 ```
 
 - `plot_promoter_usage()`: per promoter, the sample types where it carries the
@@ -330,8 +339,9 @@ ggplot2::ggsave("TP73_track.pdf", p, width = 11, height = attr(p, "height"))
 - `plot_promoter_usage_cancer()`: share of every promoter (and total TPM) in
   normal samples vs cancer cell lines of the same lineage, two-sided Wilcoxon.
 - `plot_promoter_track()`: one gene on the genome with CAGE peaks in normal and
-  cancer samples, promoter arrows labelled with expression and usage share, and
-  Ensembl transcripts coloured by the promoter they start from.
+  cancer samples (or any two named sets of sample types given in `groups`),
+  promoter arrows labelled with expression and usage share in the two groups,
+  and Ensembl transcripts coloured by the promoter they start from.
 
 The FANTOM5 folder (about 40 MB) is built with `data-raw/fantom5/` and is not
 shipped with the package; point `options(promotif.fantom5_dir = ...)` to it or
@@ -599,7 +609,7 @@ plot_binding_sites(s)$genomic
 | `plot_binding_sites()` | `base_size = 12`, `point_size = 2.6`, `color_seed = NULL` |
 | `plot_promoter_usage()` | `top_n = 10`, `base_size = 12` |
 | `plot_promoter_usage_cancer()` | `min_n = 3`, `base_size = 12` |
-| `plot_promoter_track()` | `species = "homo_sapiens"`, `tss_source = "epd"`, `transcripts = "all"`, `normal = "primary cells"`, `lineage = NULL`, `cage = TRUE`, `max_transcripts = 30`, `tx_match = 500`, `flank = 2000`, `max_overlap = 0.2`, `base_size = 11`, `dir = NULL` |
+| `plot_promoter_track()` | `species = "homo_sapiens"`, `tss_source = "epd"`, `transcripts = "all"`, `normal = "primary cells"`, `lineage = NULL`, `cage = TRUE`, `max_transcripts = 30`, `tx_match = 500`, `flank = 2000`, `max_overlap = 0.2`, `base_size = 11`, `dir = NULL`, `groups = NULL` |
 | `plot_regulators()`, `plot_regulators_chip()` | `base_size = 12`, `point_size = 3` |
 | `plot_promoter_regulators()` | `top_n = 30`, `base_size = 12` |
 
@@ -715,8 +725,9 @@ removes cached sequences and lookups.
   (dynamic programming via `TFMPvalue`) under a zero-order background with the
   base composition of the window; q-values are Benjamini-Hochberg over all
   positions tested.
-- **Resilience.** Ensembl requests are retried with back-off and fall back to
-  the UCSC API; cached results are used whenever available.
+- **Resilience.** Ensembl requests are retried with back-off; sequences fall
+  back from the Ensembl transcript to the Ensembl genomic region and then to the
+  UCSC API; cached results are used whenever available.
 - **Tuning.** Lower `threshold_frac` (e.g. 0.75) to include weaker matches;
   widen `upstream` to reach distal elements (e.g. 4500 bp for the KLK3 upstream
   enhancer).

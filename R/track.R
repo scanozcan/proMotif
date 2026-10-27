@@ -1,9 +1,10 @@
 #' Promoter track of a gene
 #'
-#' Draws one gene on the genome: FANTOM5 CAGE signal in normal and cancer
-#' samples, the gene's promoters (arrows labelled with expression and usage
-#' share in normal vs cancer samples) and its Ensembl transcripts, with exons
-#' coloured by the promoter each transcript starts from.
+#' Draws one gene on the genome: FANTOM5 CAGE signal in two groups of samples
+#' (normal vs cancer by default, or any two sets given in `groups`), the gene's
+#' promoters (arrows labelled with expression and usage share in the two
+#' groups) and its Ensembl transcripts, with exons coloured by the promoter each
+#' transcript starts from.
 #'
 #' @param gene HGNC gene symbol.
 #' @param species Ensembl species name (default `"homo_sapiens"`).
@@ -18,6 +19,11 @@
 #' @param max_overlap Window overlap above which TSSs form one promoter (default 0.2).
 #' @param base_size Base font size (default 11).
 #' @param dir FANTOM5 folder (default: `options(promotif.fantom5_dir)`).
+#' @param groups Optional named list of two sets of FANTOM5 sample types that
+#'   replaces the normal / cancer comparison, e.g.
+#'   `list("cell types using P2" = c(...), "other primary cells" = c(...))`.
+#'   Sample types may be given as `"sample type"` or `"sample type [category]"`.
+#'   Default `NULL` (normal vs cancer).
 #' @return A patchwork plot; `attr(p, "height")` gives a suggested page height
 #'   and `attr(p, "data")` the drawn promoters, transcripts, exons and peaks.
 #' @export
@@ -25,13 +31,25 @@
 #' \dontrun{
 #' p <- plot_promoter_track("TP73")
 #' ggplot2::ggsave("TP73_track.pdf", p, width = 11, height = attr(p, "height"))
+#'
+#' # any two groups of FANTOM5 sample types, e.g. the primary cells that use
+#' # GATA2 P1 vs all other primary cells
+#' s <- add_promoter_usage(scan_binding_sites("GATA2", "GATA2", tss_source = "epd"))
+#' prim <- s$usage$table[s$usage$table$category == "primary cells", ]
+#' p1 <- prim$sample_type[prim$dominant == "P1"]
+#' other <- setdiff(prim$sample_type, p1)
+#' p2 <- plot_promoter_track("GATA2",
+#'                           groups = list("cells using P1" = p1, "other primary cells" = other))
 #' }
 plot_promoter_track <- function(gene, species = "homo_sapiens", tss_source = c("epd", "ensembl"),
                                 transcripts = c("all", "protein_coding"),
                                 normal = "primary cells", lineage = NULL, cage = TRUE,
                                 max_transcripts = 30, tx_match = 500, flank = 2000,
-                                max_overlap = 0.2, base_size = 11, dir = NULL) {
+                                max_overlap = 0.2, base_size = 11, dir = NULL, groups = NULL) {
   tss_source <- match.arg(tss_source); transcripts <- match.arg(transcripts)
+  if (!is.null(groups) && (length(groups) != 2 || is.null(names(groups))))
+    stop("groups must be a named list of two sets of sample types")
+  gnames <- if (is.null(groups)) c("normal", "cancer") else names(groups)
   js <- .ensembl_lookup_expand(gene, species)
   strand <- js$strand; chr <- js$seq_region_name
   gt <- .gene_transcripts(gene, species, transcripts, tss_source)
@@ -76,26 +94,32 @@ plot_promoter_track <- function(gene, species = "homo_sapiens", tss_source = c("
   if (cage && identical(species, "homo_sapiens")) {
     ch <- .fantom5_chunk(paste0("chr", sub("^chr", "", chr)), if (strand == 1) "+" else "-", dir)
     if (!is.null(ch)) {
-      cls <- .classify_samples(ch$samples$sample_type, ch$samples$category)
-      grp <- ifelse(cls$condition == "cancer" & ch$samples$category == "cell lines", "cancer",
-             ifelse(cls$condition != "cancer" & ch$samples$category %in% normal, "normal", NA))
-      if (!is.null(lineage)) grp[is.na(cls$lineage) | !(cls$lineage %in% lineage)] <- NA
+      if (is.null(groups)) {
+        cls <- .classify_samples(ch$samples$sample_type, ch$samples$category)
+        grp <- ifelse(cls$condition == "cancer" & ch$samples$category == "cell lines", "cancer",
+               ifelse(cls$condition != "cancer" & ch$samples$category %in% normal, "normal", NA))
+        if (!is.null(lineage)) grp[is.na(cls$lineage) | !(cls$lineage %in% lineage)] <- NA
+      } else {
+        lab2 <- sprintf("%s [%s]", ch$samples$sample_type, ch$samples$category)
+        grp <- rep(NA_character_, nrow(ch$samples))
+        for (k in 2:1) grp[ch$samples$sample_type %in% groups[[k]] | lab2 %in% groups[[k]]] <- gnames[k]
+      }
       i <- which(ch$peaks$summit >= lo & ch$peaks$summit <= hi)
-      if (length(i) && any(grp == "normal", na.rm = TRUE) && any(grp == "cancer", na.rm = TRUE)) {
+      if (length(i) && any(grp == gnames[1], na.rm = TRUE) && any(grp == gnames[2], na.rm = TRUE)) {
         M <- ch$tpm100[i, , drop = FALSE] / 100
         mean_g <- function(g) rowMeans(M[, which(grp == g), drop = FALSE])
-        pk <- data.frame(summit = ch$peaks$summit[i], normal = mean_g("normal"), cancer = mean_g("cancer"))
+        pk <- data.frame(summit = ch$peaks$summit[i], A = mean_g(gnames[1]), B = mean_g(gnames[2]))
         pk$promoter_id <- vapply(pk$summit, function(s) {
           hit <- which(s >= prom$tss_min - tx_match & s <= prom$tss_max + tx_match)
           if (length(hit)) prom$promoter_id[hit[1]] else "none"
         }, character(1))
-        tot <- c(normal = sum(pk$normal[pk$promoter_id != "none"]), cancer = sum(pk$cancer[pk$promoter_id != "none"]))
+        tot <- c(A = sum(pk$A[pk$promoter_id != "none"]), B = sum(pk$B[pk$promoter_id != "none"]))
         for (p in prom$promoter_id)
           share_lab[p] <- sprintf("  %.1f -> %.1f TPM, share %.0f%% -> %.0f%%",
-                                  sum(pk$normal[pk$promoter_id == p]), sum(pk$cancer[pk$promoter_id == p]),
-                                  100 * sum(pk$normal[pk$promoter_id == p]) / max(tot["normal"], 1e-9),
-                                  100 * sum(pk$cancer[pk$promoter_id == p]) / max(tot["cancer"], 1e-9))
-        attr(pk, "n_types") <- c(normal = sum(grp == "normal", na.rm = TRUE), cancer = sum(grp == "cancer", na.rm = TRUE))
+                                  sum(pk$A[pk$promoter_id == p]), sum(pk$B[pk$promoter_id == p]),
+                                  100 * sum(pk$A[pk$promoter_id == p]) / max(tot["A"], 1e-9),
+                                  100 * sum(pk$B[pk$promoter_id == p]) / max(tot["B"], 1e-9))
+        attr(pk, "n_types") <- c(A = sum(grp == gnames[1], na.rm = TRUE), B = sum(grp == gnames[2], na.rm = TRUE))
       }
     }
   }
@@ -110,10 +134,11 @@ plot_promoter_track <- function(gene, species = "homo_sapiens", tss_source = c("
   xs <- scale_x_continuous(limits = xr, expand = c(0, 0))
   plots <- list()
   if (!is.null(pk)) {
-    pl <- rbind(data.frame(pk[, c("summit", "promoter_id")], tpm = pk$normal,
-                           group = sprintf("normal (%d types)", attr(pk, "n_types")["normal"])),
-                data.frame(pk[, c("summit", "promoter_id")], tpm = pk$cancer,
-                           group = sprintf("cancer lines (%d types)", attr(pk, "n_types")["cancer"])))
+    glab <- if (is.null(groups)) c("normal", "cancer lines") else gnames
+    pl <- rbind(data.frame(pk[, c("summit", "promoter_id")], tpm = pk$A,
+                           group = sprintf("%s (%d types)", glab[1], attr(pk, "n_types")["A"])),
+                data.frame(pk[, c("summit", "promoter_id")], tpm = pk$B,
+                           group = sprintf("%s (%d types)", glab[2], attr(pk, "n_types")["B"])))
     pl$group <- factor(pl$group, unique(pl$group))
     plots$cage <- ggplot(pl) +
       geom_segment(aes(x = kb(summit), xend = kb(summit), y = 0, yend = tpm, color = promoter_id),
@@ -123,9 +148,11 @@ plot_promoter_track <- function(gene, species = "homo_sapiens", tss_source = c("
         title = sprintf("%s  |  chr%s:%s-%s (%s strand)  |  promoters from %s", gene, chr,
                         .fmt_bp(lo), .fmt_bp(hi), if (strand == 1) "+" else "-",
                         if (gt$source == "epd") "EPDnew (mapped TSSs)" else "Ensembl TSSs"),
-        subtitle = sprintf("FANTOM5 CAGE peaks; normal = %s%s; cancer = cancer cell lines | promoter labels: summed mean TPM and share, normal -> cancer",
-                           paste(normal, collapse = " + "),
-                           if (!is.null(lineage)) paste0("; lineage: ", paste(lineage, collapse = ", ")) else "")) +
+        subtitle = if (is.null(groups))
+          sprintf("FANTOM5 CAGE peaks; normal = %s%s; cancer = cancer cell lines | promoter labels: summed mean TPM and share, normal -> cancer",
+                  paste(normal, collapse = " + "),
+                  if (!is.null(lineage)) paste0("; lineage: ", paste(lineage, collapse = ", ")) else "")
+          else "FANTOM5 CAGE peaks, mean over sample types | promoter labels: summed mean TPM and share, top -> bottom panel") +
       th + theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
   }
   arr <- 0.025 * span * strand

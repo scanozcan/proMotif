@@ -17,7 +17,8 @@ plot_promoter_track(
   flank = 2000,
   max_overlap = 0.2,
   base_size = 11,
-  dir = NULL
+  dir = NULL,
+  groups = NULL
 )
 }
 \arguments{
@@ -46,20 +47,36 @@ plot_promoter_track(
 \item{base_size}{Base font size (default 11).}
 
 \item{dir}{FANTOM5 folder (default: `options(promotif.fantom5_dir)`).}
+
+\item{groups}{Optional named list of two sets of FANTOM5 sample types that
+replaces the normal / cancer comparison, e.g.
+`list("cell types using P2" = c(...), "other primary cells" = c(...))`.
+Sample types may be given as `"sample type"` or `"sample type [category]"`.
+Default `NULL` (normal vs cancer).}
 }
 \value{
 A patchwork plot; `attr(p, "height")` gives a suggested page height
   and `attr(p, "data")` the drawn promoters, transcripts, exons and peaks.
 }
 \description{
-Draws one gene on the genome: FANTOM5 CAGE signal in normal and cancer
-samples, the gene's promoters (arrows labelled with expression and usage
-share in normal vs cancer samples) and its Ensembl transcripts, with exons
-coloured by the promoter each transcript starts from.
+Draws one gene on the genome: FANTOM5 CAGE signal in two groups of samples
+(normal vs cancer by default, or any two sets given in `groups`), the gene's
+promoters (arrows labelled with expression and usage share in the two
+groups) and its Ensembl transcripts, with exons coloured by the promoter each
+transcript starts from.
 }
 \examples{
 \dontrun{
 p <- plot_promoter_track("TP73")
 ggplot2::ggsave("TP73_track.pdf", p, width = 11, height = attr(p, "height"))
+
+# any two groups of FANTOM5 sample types, e.g. the primary cells that use
+# GATA2 P1 vs all other primary cells
+s <- add_promoter_usage(scan_binding_sites("GATA2", "GATA2", tss_source = "epd"))
+prim <- s$usage$table[s$usage$table$category == "primary cells", ]
+p1 <- prim$sample_type[prim$dominant == "P1"]
+other <- setdiff(prim$sample_type, p1)
+p2 <- plot_promoter_track("GATA2",
+                          groups = list("cells using P1" = p1, "other primary cells" = other))
 }
 }
