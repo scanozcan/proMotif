@@ -70,6 +70,7 @@ plot_promoter_track <- function(gene, species = "homo_sapiens", tss_source = c("
     hit <- which(s >= prom$tss_min - tx_match & s <= prom$tss_max + tx_match)
     if (length(hit)) prom$promoter_id[hit[1]] else "none"
   }, character(1))
+  ntx_prom <- setNames(as.integer(table(factor(tx$promoter_id, levels = prom$promoter_id))), prom$promoter_id)
   tx <- tx[order(match(tx$promoter_id, c(prom$promoter_id, "none")), !tx$canonical,
                  tx$biotype != "protein_coding"), , drop = FALSE]
   if (nrow(tx) > max_transcripts) {
@@ -166,8 +167,8 @@ plot_promoter_track <- function(gene, species = "homo_sapiens", tss_source = c("
   pa <- data.frame(promoter_id = prom$promoter_id, x = prom$tss, xend = prom$tss + arr,
                    ly = 1.5 + 0.55 * ((seq_len(np) - 1) %% 3),          # stagger labels
                    hj = ifelse(prom$tss < mean(xr) * 1000, 0, 1),        # keep labels inside
-                   lab = sprintf("%s%s (%d TSS)%s", prom$promoter_id, ifelse(prom$has_canonical, "*", ""),
-                                 prom$n_tss, share_lab[prom$promoter_id]))
+                   lab = sprintf("%s%s (%s)%s", prom$promoter_id, ifelse(prom$has_canonical, "*", ""),
+                                 .tss_tx_label(prom, ntx_prom[prom$promoter_id]), share_lab[prom$promoter_id]))
   plots$prom <- ggplot(pa) +
     geom_rect(data = prom, aes(xmin = kb(tss_min - tx_match), xmax = kb(tss_max + tx_match),
                                ymin = -0.4, ymax = 1.2, fill = promoter_id), alpha = 0.15, inherit.aes = FALSE) +

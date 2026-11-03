@@ -30,8 +30,12 @@ export(score_binding_sites)
 export(summarise_promoters)
 export(top_binding_sites)
 import(ggplot2)
-importFrom(stats,ave)
-importFrom(stats,embed)
-importFrom(stats,setNames)
-importFrom(utils,head)
-importFrom(utils,write.csv)
+importFrom(stats,
+  ave,
+  embed,
+  setNames
+)
+importFrom(utils,
+  head,
+  write.csv
+)

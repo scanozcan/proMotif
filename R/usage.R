@@ -112,6 +112,43 @@ add_promoter_usage <- function(scan, flank = 500, dir = NULL, min_tpm = 1,
   scan
 }
 
+## Genes with a single promoter: its share is 100% wherever the gene is expressed,
+## so show where the gene is expressed instead - the top sample types by total
+## CAGE TPM (log scale), coloured by lineage, with the number of expressing
+## sample types per FANTOM5 category in the subtitle.
+.plot_expression_single <- function(scan, top_n = 20, base_size = 12) {
+  u <- scan$usage; m <- scan$meta; tab <- u$table
+  ex <- tab[tab$total_tpm >= u$min_tpm, , drop = FALSE]
+  ex <- utils::head(ex[order(-ex$total_tpm), , drop = FALSE], top_n)
+  cat_short <- c("primary cells" = "primary cell", "tissues" = "tissue", "cell lines" = "cell line")
+  ex$label <- sprintf("%s [%s]", ex$sample_type, cat_short[ex$category] %||% ex$category)
+  ex$label <- factor(ex$label, levels = rev(unique(ex$label)))
+  lin <- if ("lineage" %in% names(ex)) ex$lineage else rep(NA_character_, nrow(ex))
+  lin[is.na(lin)] <- "other / unassigned"
+  ex$lineage_lab <- factor(lin, levels = unique(c(sort(setdiff(unique(lin), "other / unassigned")), "other / unassigned")))
+  n_cat <- table(tab$category[tab$total_tpm >= u$min_tpm])
+  pr <- scan$promoters
+  ntx <- .ensembl_tx_count(pr, m$gene, m$species %||% "homo_sapiens")
+  plab <- sprintf("%s%s (%s)", pr$promoter_id[1], if (isTRUE(pr$has_canonical[1])) "*" else "",
+                  .tss_tx_label(pr[1, , drop = FALSE], ntx[1], short = TRUE))
+  ggplot(ex, aes(total_tpm, label)) +
+    geom_col(aes(fill = lineage_lab), width = 0.75) +
+    geom_text(aes(label = sprintf("%.0f", total_tpm)), hjust = -0.15, size = base_size / 4.2, color = "grey30") +
+    scale_x_log10(labels = function(x) format(x, big.mark = ",", scientific = FALSE, trim = TRUE),
+                  expand = expansion(mult = c(0, 0.12))) +
+    scale_fill_manual(values = stats::setNames(c(grDevices::hcl.colors(max(1, nlevels(ex$lineage_lab) - 1), "Dark 3"), "grey70")[seq_len(nlevels(ex$lineage_lab))],
+                                               levels(ex$lineage_lab)), name = "Lineage", drop = FALSE) +
+    labs(x = "Total CAGE expression of the gene (TPM, log scale)", y = NULL,
+         title = sprintf("Where %s is expressed (FANTOM5 CAGE) | one promoter: %s", m$gene, plab),
+         subtitle = sprintf("one promoter, so its share is 100%% wherever %s is expressed; top %d sample types by expression\nexpressed (>= %g TPM) in %d of %d sample types: %s",
+                            m$gene, nrow(ex), u$min_tpm, sum(n_cat), nrow(tab),
+                            paste(sprintf("%s %d", names(n_cat), as.integer(n_cat)), collapse = ", "))) +
+    theme_bw(base_size = base_size) +
+    theme(panel.grid.minor = element_blank(), panel.grid.major.y = element_blank(),
+          plot.title = element_text(size = rel(0.95)),
+          plot.subtitle = element_text(size = rel(0.72)))
+}
+
 ## NEW plot: where each promoter is used. For every promoter, the sample types
 ## in which it carries the largest share of the gene's CAGE signal (gene
 ## expressed >= min_tpm), plus the sample types with the highest total
@@ -120,7 +157,11 @@ add_promoter_usage <- function(scan, flank = 500, dir = NULL, min_tpm = 1,
 #' Plot promoter usage across cell types
 #'
 #' For each promoter, the sample types in which it carries the largest share of
-#' the gene's CAGE signal, plus the sample types with the highest expression.
+#' the gene's CAGE signal, plus the sample types with the highest expression
+#' (most expressed on top in each panel). For a gene with a single promoter,
+#' whose share is 100\% wherever it is expressed, the plot shows instead the
+#' top \code{2 * top_n} sample types by total CAGE expression (log scale),
+#' coloured by lineage.
 #' @param scan A scan with usage (\code{\link{add_promoter_usage}}).
 #' @param top_n Sample types per group (default 10).
 #' @param base_size Base font size.
@@ -132,6 +173,7 @@ plot_promoter_usage <- function(scan, top_n = 10, base_size = 12) {
   tab <- u$table; pids <- rownames(u$tpm)
   ex  <- tab[tab$total_tpm >= u$min_tpm, , drop = FALSE]
   if (!nrow(ex)) return(NULL)
+  if (length(pids) == 1) return(.plot_expression_single(scan, top_n = 2 * top_n, base_size = base_size))
   pick <- list()
   for (p in pids) {
     e <- ex[ex[[paste0(p, "_tpm")]] >= u$min_tpm, , drop = FALSE]
@@ -152,14 +194,15 @@ plot_promoter_usage <- function(scan, top_n = 10, base_size = 12) {
   long <- do.call(rbind, lapply(pids, function(p) data.frame(
     label = rows$label, group = rows$group, promoter = p,
     frac = rows[[paste0(p, "_frac")]], total = rows$total_tpm, stringsAsFactors = FALSE)))
-  first <- pids[1]
-  ord <- rows$label[order(rows$group, rows[[paste0(first, "_frac")]])]
+  ## within each panel the most expressed sample type is on top
+  ord <- rows$label[order(rows$group, rows$total_tpm)]
   long$label    <- factor(long$label, levels = unique(ord))
   long$promoter <- factor(long$promoter, levels = pids)
   long$group    <- factor(long$group, levels = c(sprintf("%s used most", pids), "highest expression"))
   pr <- scan$promoters
-  plab <- setNames(sprintf("%s%s (%d tx)", pr$promoter_id, ifelse(pr$has_canonical, "*", ""),
-                           pr$n_transcripts), pr$promoter_id)
+  ntx <- .ensembl_tx_count(pr, scan$meta$gene, scan$meta$species %||% "homo_sapiens")
+  plab <- setNames(sprintf("%s%s (%s)", pr$promoter_id, ifelse(pr$has_canonical, "*", ""),
+                           .tss_tx_label(pr, ntx, short = TRUE)), pr$promoter_id)
   totals <- unique(long[, c("label", "group", "total")])
   ggplot(long, aes(frac, label)) +
     geom_col(aes(fill = promoter), width = 0.75) +
@@ -196,7 +239,7 @@ plot_promoter_usage <- function(scan, top_n = 10, base_size = 12) {
                         "glioma|glioblastoma|astrocytoma|blastoma|mesothelioma|tumou?r|",
                         "seminoma|carcinoid|hodgkin|malignant|neoplasm|myelodysplastic")
 .lineages <- list(   # first match wins - specific before broad
-  blood      = "leuka?emia|lymphoma|myeloma|hodgkin|myelodysplastic|blood|monocyte|macrophage|t cell|b cell|nk cell|natural killer|neutrophil|lymphocyte|erythro|dendritic|basophil|eosinophil|mast cell|bone marrow|thymus|spleen|lymph node|tonsil|myeloid|megakaryo|cd[0-9]+",
+  blood      = "leuka?emia|lymphoma|myeloma|hodgkin|myelodysplastic|blood|monocyte|macrophage|t cell|b cell|nk cell|natural killer|neutrophil|lymphocyte|erythro|dendritic|basophil|eosinophil|mast cell|bone marrow|thymus|spleen|lymph node|tonsil|myeloid|myelocyte|megakaryo|cd[0-9]+",
   brain      = "glioma|glioblastoma|astrocytoma|neuroblastoma|medulloblastoma|meningioma|brain|astrocyte|neuron|neural|cortex|gyrus|cerebell|hippocamp|thalamus|amygdala|nucleus|lobe|medulla|spinal|substantia|putamen|pons|caudate|globus|insula|schwann|locus coeruleus|optic|pineal|mening|olfactory|corpus callosum|pituitary",
   liver      = "liver|hepat|cholangio|bile duct|gall",
   colon      = "colon|colorectal|rectal|rectum|intestin|duoden|caecum|cecum|appendix|ileum|jejun",
@@ -248,8 +291,9 @@ plot_promoter_usage_cancer <- function(scan, min_n = 3, base_size = 12) {
   if (is.null(u) || is.null(u$table$condition)) return(NULL)
   pr   <- scan$promoters
   alts <- pr$promoter_id                                  # all promoters
-  plab <- setNames(sprintf("share of %s%s (%d tx)", pr$promoter_id,
-                           ifelse(pr$has_canonical, "*", ""), pr$n_transcripts),
+  ntx <- .ensembl_tx_count(pr, m$gene, m$species %||% "homo_sapiens")
+  plab <- setNames(sprintf("share of %s%s (%s)", pr$promoter_id,
+                           ifelse(pr$has_canonical, "*", ""), .tss_tx_label(pr, ntx, short = TRUE)),
                    pr$promoter_id)
   d <- u$table[u$table$total_tpm >= u$min_tpm & u$table$condition %in% c("normal", "cancer") &
                !is.na(u$table$lineage), , drop = FALSE]

@@ -181,6 +181,9 @@ run_binding_site_analysis <- function(gene, tf = NULL,
                 row.names = FALSE)
       write.csv(scan$sites, file.path(out_dir, sprintf("%s_%s_all_sites_ranked.csv", gene, tf)),
                 row.names = FALSE)
+      if (!is.null(scan$hits))
+        write.csv(scan$hits, file.path(out_dir, sprintf("%s_%s_all_hits.csv", gene, tf)),
+                  row.names = FALSE)
       message(sprintf("Wrote: %s_%s_top_sites.csv (%d site(s) with binding probability >= %.2f or top %d; %d high, %d medium)",
                       gene, tf, nrow(top_sites), top_sites_min_prob, top_sites_min_n,
                       sum(top_sites$confidence == "high", na.rm = TRUE),
@@ -204,7 +207,7 @@ run_binding_site_analysis <- function(gene, tf = NULL,
     message("Wrote plots to: ", out_dir)
   }
   message("Done.")
-  invisible(list(result = scan$result, sites = scan$sites, top_sites = top_sites,
+  invisible(list(result = scan$result, sites = scan$sites, hits = scan$hits, top_sites = top_sites,
                  plots = plots, meta = scan$meta,
                  promoters = scan$promoters, promoter_summary = psum, chip = scan$chip,
                  usage = scan$usage, scan = scan))

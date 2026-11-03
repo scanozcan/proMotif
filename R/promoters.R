@@ -19,6 +19,34 @@
   txdf
 }
 
+## Ensembl transcripts (any biotype) starting at each promoter: transcript TSS
+## within tx_match bp of the promoter's TSSs, each transcript counted once (first
+## matching promoter; same rule as plot_promoter_track). With EPDnew TSSs the
+## promoter table holds one row per mapped TSS, so this is the transcript count
+## that matches the genome. NA if the Ensembl lookup fails.
+.ensembl_tx_count <- function(prom, gene, species = "homo_sapiens", tx_match = 500) {
+  out <- setNames(rep(NA_integer_, nrow(prom)), prom$promoter_id)
+  js <- tryCatch(.ensembl_lookup_expand(gene, species), error = function(e) NULL)
+  if (is.null(js) || !length(js$Transcript)) return(out)
+  st  <- js$strand
+  tss <- vapply(js$Transcript, function(t) as.numeric(if (st == 1) t$start else t$end), numeric(1))
+  lo  <- prom$tss_min %||% prom$tss; hi <- prom$tss_max %||% prom$tss
+  pid <- vapply(tss, function(x) {
+    h <- which(x >= lo - tx_match & x <= hi + tx_match)
+    if (length(h)) prom$promoter_id[h[1]] else NA_character_
+  }, "")
+  out[] <- as.integer(table(factor(pid, levels = prom$promoter_id)))
+  out
+}
+## "2 TSS, 27 transcripts" (falls back to the TSS count alone)
+.tss_tx_label <- function(prom, ntx, short = FALSE) {
+  ntss <- prom$n_tss %||% prom$n_transcripts
+  full <- if (short) sprintf("%d TSS, %d tx", as.integer(ntss), as.integer(ntx))
+          else sprintf("%d TSS, %d transcript%s", as.integer(ntss), as.integer(ntx), ifelse(ntx == 1, "", "s"))
+  none <- sprintf("%d TSS, no annotated %s", as.integer(ntss), if (short) "tx" else "transcript")
+  ifelse(is.na(ntx), sprintf("%d TSS", as.integer(ntss)), ifelse(ntx == 0, none, full))
+}
+
 ## Genomic scan window(s) for TSS(s) on a strand (matrix: start, end).
 .promoter_window <- function(tss, strand, upstream, downstream) {
   if (strand == 1) cbind(start = tss - upstream,   end = tss + downstream)
@@ -171,6 +199,9 @@ plot_promoter_map <- function(scan, base_size = 12, point_size = 2.6,
   use_p <- "pvalue" %in% names(g) && any(is.finite(g$pvalue))
   use_prob <- y_metric == "probability" && "binding_prob" %in% names(g) &&
               any(is.finite(g$binding_prob))
+  ## probability plots: one point per binding locus (its best hit; res is ordered
+  ## by binding probability, so the first hit of each locus is the best)
+  if (use_prob && "locus" %in% names(g)) g <- g[!duplicated(g$locus), , drop = FALSE]
   if (y_metric == "probability" && !use_prob)
     message("  no binding probabilities (needs TFMPvalue) - plotting -log10 p instead.")
   g$y  <- if (use_prob) g$binding_prob else if (use_p) -log10(pmax(g$pvalue, 1e-300)) else g$score_frac
@@ -185,10 +216,11 @@ plot_promoter_map <- function(scan, base_size = 12, point_size = 2.6,
   ## Independent regions, ordered left -> right on the chromosome. When there is
   ## more than one, each region gets its own panel with its own x axis
   ## (facet_regions = TRUE), so promoters tens of kb apart stay readable.
+  prom$n_ensembl_tx <- .ensembl_tx_count(prom, m$gene, m$species %||% "homo_sapiens")
   reg_rng <- do.call(rbind, lapply(split(prom, prom$region), function(d) data.frame(
     region = d$region[1], xmin = min(d$win_start), xmax = max(d$win_end),
-    members = sprintf("%d transcript%s", sum(d$n_transcripts),
-                      if (sum(d$n_transcripts) == 1) "" else "s"),
+    members = .tss_tx_label(data.frame(n_tss = sum(d$n_tss %||% d$n_transcripts)),
+                            if (anyNA(d$n_ensembl_tx)) NA_integer_ else sum(d$n_ensembl_tx)),
     stringsAsFactors = FALSE)))
   reg_rng <- reg_rng[order(reg_rng$xmin), , drop = FALSE]
   reg_rng$panel <- sprintf("%s (%s)", reg_rng$region, reg_rng$members)
@@ -211,7 +243,7 @@ plot_promoter_map <- function(scan, base_size = 12, point_size = 2.6,
   rects <- data.frame(xmin = po$win_start, xmax = po$win_end, ymin = ybot, ymax = ytop,
                       lab_y = ylab_y - ((k - 1) %% 3) * (ylab_y - ybot) * 0.08,
                       region = po$region, tss = po$tss,
-                      lab = sprintf("%d tx%s", as.integer(po$n_transcripts),
+                      lab = sprintf("%s%s", .tss_tx_label(po, po$n_ensembl_tx, short = TRUE),
                                     ifelse(po$has_canonical, "*", "")))
   rects$panel <- factor(panel_of_region[rects$region], levels = lev)
 
@@ -474,6 +506,7 @@ compare_promoter_regulators <- function(gene, species = "homo_sapiens",
   rp <- do.call(rbind, lapply(split(prom, prom$region), function(d)
     d[order(!d$has_canonical, -d$n_transcripts), ][1, ]))
   rp <- rp[order(as.integer(sub("^R", "", rp$region))), ]
+  rp$n_ensembl_tx <- .ensembl_tx_count(rp, gene, species)
 
   seqs <- list()
   for (i in seq_len(nrow(rp))) {
@@ -488,7 +521,7 @@ compare_promoter_regulators <- function(gene, species = "homo_sapiens",
     seqs[[rp$region[i]]] <- list(pinfo = pinfo, promoter_id = rp$promoter_id[i],
                                  tss = rp$tss[i], transcript_id = tx$transcript_id,
                                  has_canonical = rp$has_canonical[i],
-                                 n_tx = rp$n_transcripts[i])
+                                 n_tx = rp$n_ensembl_tx[i], n_tss = rp$n_tss[i])
   }
   if (length(seqs) < 2) stop("Fewer than two promoter sequences could be fetched.")
   pwms <- .jaspar_core_pwms(collection, tax_group, jaspar_db, release = jaspar_release)
@@ -576,8 +609,8 @@ compare_promoter_regulators <- function(gene, species = "homo_sapiens",
 
   region_labels <- vapply(regs, function(r) {
     s <- seqs[[r]]
-    sprintf("%s%s (%d tx)\n%s:%s", s$promoter_id, if (s$has_canonical) "*" else "",
-            as.integer(s$n_tx), gt$chr, .fmt_bp(s$tss))
+    sprintf("%s%s (%s)\n%s:%s", s$promoter_id, if (s$has_canonical) "*" else "",
+            .tss_tx_label(data.frame(n_tss = s$n_tss), s$n_tx, short = TRUE), gt$chr, .fmt_bp(s$tss))
   }, "")
   cnt <- table(factor(wide$class))
   message("  calls: ", paste(sprintf("%s %d", names(cnt), as.integer(cnt)), collapse = " | "))

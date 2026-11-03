@@ -138,7 +138,7 @@ For a gene and a TF, `scan_binding_sites()`:
 ```r
 s <- scan_binding_sites("KLK3", "AR", upstream = 4500)   # slow part: network + scan
 s <- add_chip_peaks(s, cell_pattern = "LNCaP|VCaP|22Rv1|prostate", max_mb = 1000)
-head(s$sites)                                             # ranked distinct sites
+head(s$sites)                                             # ranked binding loci
 top_binding_sites(s)                                      # P >= 0.5, at least 10 sites
 plot_top_sites(s, top_n = 10)                             # fast: local plotting
 ```
@@ -199,9 +199,21 @@ instead (also reported as `chip_support_all`). The replication term is
 `k^2 / (k^2 + 20^2)` for `k` supporting experiments (`rep_half = 20`), scaled
 by the same relative motif strength.
 
+**Binding loci.** One binding event is often matched several times: on both
+strands of a palindromic motif, by the JASPAR and the HOCOMOCO matrix, or in
+shifted frames of the same match. Overlapping hits are therefore grouped into
+binding loci, best hit first: a hit joins a locus when it overlaps the locus'
+best hit by at least 80% of the longer of the two spans
+(`options(promotif.locus_overlap = 0.8)`). A short core inside a longer,
+different match (for example 5 bp inside 9 bp) stays a separate site, and so do
+adjacent sites that do not overlap. A locus takes the binding probability of its
+best hit; `scan$sites` lists the loci (with `locus_start`, `locus_end`,
+`n_hits`, `hit_motifs` and the databases that matched) and `scan$hits` every
+distinct hit with the locus it belongs to. Different TFs are never merged.
+
 **Confidence and significance.** Sites are `high` (P >= 0.8), `medium`
-(0.5-0.8) or `low` confidence. A site is `significant` for its locus when its
-robust z-score of logit P against all distinct sites in the scanned windows,
+(0.5-0.8) or `low` confidence. A site is `significant` when its
+robust z-score of logit P against all binding loci in the scanned windows,
 (logit P - median) / MAD, is at least 2 **and** P >= 0.5. In the top-sites
 plots, significant sites get a black ring (inside a ChIP-Atlas peak) or a grey
 ring (motif evidence only).
@@ -286,6 +298,12 @@ windows overlap by at least `max_overlap` (20%; TSSs within about 2.4 kb for a
 -2500/+500 window) form one promoter, numbered P1, P2, ... from 5' to 3'. Every
 run prints the promoter structure of the gene.
 
+Plots label each promoter with its TSSs and transcripts, e.g. `P2* (2 TSS, 58 tx)`
+(`*` = the canonical transcript's promoter). TSS = distinct TSSs grouped into the
+promoter (EPDnew entries with `tss_source = "epd"`); tx = Ensembl transcripts, of any
+biotype, whose TSS lies within 500 bp of the promoter's TSSs. A promoter with CAGE and
+EPDnew support but no annotated transcript is labelled `no annotated tx`.
+
 ```r
 run_binding_site_analysis("TP73", "TP53",
                           transcripts = "all",        # include non-coding isoforms
@@ -335,7 +353,10 @@ p <- plot_promoter_track("TP73", groups = list("cells using P1" = p1,
 ```
 
 - `plot_promoter_usage()`: per promoter, the sample types where it carries the
-  largest share, plus the highest-expressing sample types (TPM).
+  largest share, plus the highest-expressing sample types (TPM); the most
+  expressed sample type is on top of each panel. For a gene with one promoter
+  (100% share wherever it is expressed) it shows the top sample types by total
+  expression instead, coloured by lineage.
 - `plot_promoter_usage_cancer()`: share of every promoter (and total TPM) in
   normal samples vs cancer cell lines of the same lineage, two-sided Wilcoxon.
 - `plot_promoter_track()`: one gene on the genome with CAGE peaks in normal and
@@ -479,8 +500,9 @@ r <- run_binding_site_analysis(
   top_n                = 20            # discovery mode: TFs shown
 )
 
-r$top_sites                # likely binding sites
-r$sites                    # all distinct sites, ranked
+r$top_sites                # likely binding sites (binding loci)
+r$sites                    # all binding loci, ranked
+r$hits                     # every distinct motif hit, with its locus
 r$result                   # every site row (per window and database)
 r$promoter_summary         # one row per promoter
 r$plots$top_sites          # labelled top-sites plot (and $top_sites_nolabels)
@@ -639,8 +661,9 @@ plot_binding_sites(s)$genomic
 
 | File | Content |
 |---|---|
-| `<GENE>_<TF>_top_sites.csv` | likely binding sites (P >= 0.5, at least 10), one row per distinct site |
-| `<GENE>_<TF>_all_sites_ranked.csv` | all distinct sites, ranked by binding probability |
+| `<GENE>_<TF>_top_sites.csv` | likely binding sites (P >= 0.5, at least 10), one row per binding locus |
+| `<GENE>_<TF>_all_sites_ranked.csv` | all binding loci, ranked by binding probability |
+| `<GENE>_<TF>_all_hits.csv` | every distinct motif hit (span and strand), with its binding locus |
 | `<GENE>_<TF>_binding_sites.csv` | every site row (per TSS window and database) |
 | `<GENE>_<TF>_top_sites[_chip].pdf` | top-sites plot with labels (and ChIP-seq track) |
 | `<GENE>_<TF>_top_sites[_chip]_nolabels.pdf` | the same without labels |
@@ -699,6 +722,7 @@ removes cached sequences and lookups.
 | `promotif.score_weights` | `NULL` | weights of the binding probability, e.g. `list(chip = 1.5)` |
 | `promotif.sig_z` | `2` | robust z-score for locus-level significance |
 | `promotif.sig_min_prob` | `0.5` | minimum probability for significance |
+| `promotif.locus_overlap` | `0.8` | overlap (fraction of the longer hit) at which hits form one binding locus |
 | `promotif.refresh_cache` | `FALSE` | re-fetch sequences and lookups and overwrite the cache |
 | `promotif.fantom5_dir` | `NULL` | folder with the FANTOM5 promoter data |
 

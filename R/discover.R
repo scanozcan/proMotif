@@ -344,11 +344,12 @@ plot_regulators <- function(disc, base_size = 12, point_size = 3) {
   ## one panel per scanned promoter (labelled with its transcripts / TSS)
   if (is.null(top$promoter_id)) top$promoter_id <- "P1"
   pr <- disc$promoters
+  if (!is.null(pr)) pr$n_ensembl_tx <- .ensembl_tx_count(pr, m$gene, m$species %||% "homo_sapiens")
   pan_lab <- function(pid) {
     i <- if (is.null(pr)) NA else match(pid, pr$promoter_id)
     ifelse(is.na(i), pid,
-           sprintf("%s%s | %d tx | %s:%s", pid, ifelse(pr$has_canonical[i], " (canonical)", ""),
-                   pr$n_transcripts[i], m$chr, .fmt_bp(pr$tss[i])))
+           sprintf("%s%s | %s | %s:%s", pid, ifelse(pr$has_canonical[i], " (canonical)", ""),
+                   .tss_tx_label(pr[i, , drop = FALSE], pr$n_ensembl_tx[i], short = TRUE), m$chr, .fmt_bp(pr$tss[i])))
   }
   pids <- unique(top$promoter_id)
   pids <- pids[order(as.integer(sub("^P", "", pids)))]

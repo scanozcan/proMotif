@@ -18,5 +18,9 @@ A ggplot, or \code{NULL}.
 }
 \description{
 For each promoter, the sample types in which it carries the largest share of
-the gene's CAGE signal, plus the sample types with the highest expression.
+the gene's CAGE signal, plus the sample types with the highest expression
+(most expressed on top in each panel). For a gene with a single promoter,
+whose share is 100\% wherever it is expressed, the plot shows instead the
+top \code{2 * top_n} sample types by total CAGE expression (log scale),
+coloured by lineage.
 }

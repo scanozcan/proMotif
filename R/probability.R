@@ -23,9 +23,17 @@
 #' A perfect motif without ChIP-seq data reaches P = 0.73 (0.82 if both
 #' databases agree). `motif_prob` is the same score without the ChIP terms.
 #' Sites are `high` (P >= 0.8), `medium` (>= 0.5) or `low` confidence, and
-#' `significant` when their robust z-score of logit P against all distinct sites
+#' `significant` when their robust z-score of logit P against all binding loci
 #' of the scanned windows is >= 2 and P >= 0.5. The weights are set by design,
 #' not fitted: P is a transparent evidence score, not a calibrated posterior.
+#'
+#' Binding loci: overlapping hits of the TF (the two strands of a palindrome,
+#' the JASPAR and HOCOMOCO matrices, shifted frames of one match) are one
+#' binding event. Hits are grouped greedily, best first; a hit joins a locus when
+#' it overlaps the locus' best hit by at least `options(promotif.locus_overlap)`
+#' (default 0.8) of the longer of the two spans, so a short core inside a longer,
+#' different match stays separate. A locus takes the binding probability of its
+#' best hit.
 #'
 #' Called automatically by [scan_binding_sites()] and [add_chip_peaks()].
 #'
@@ -35,8 +43,10 @@
 #'   `getOption("promotif.score_weights")`. Significance thresholds:
 #'   `options(promotif.sig_z = 2, promotif.sig_min_prob = 0.5)`.
 #' @return The scan with `motif_strength`, `db_agreement`, `motif_prob`,
-#'   `binding_prob`, `confidence`, `score_z` and `significant` added to
-#'   `scan$result`, and the ranked site table in `scan$sites`.
+#'   `binding_prob`, `confidence`, `score_z`, `significant` and `locus` added to
+#'   `scan$result`; the ranked binding loci in `scan$sites` (best hit of each
+#'   locus, with `locus_start`, `locus_end`, `n_hits`, `hit_motifs`, `databases`)
+#'   and every distinct hit, with its locus (`site_id`), in `scan$hits`.
 #' @export
 #' @examples
 #' \dontrun{
@@ -75,12 +85,23 @@ score_binding_sites <- function(scan, weights = getOption("promotif.score_weight
                                     w$replication * cr)
   res$confidence <- as.character(cut(res$binding_prob, c(-Inf, 0.5, 0.8, Inf),
                                      labels = c("low", "medium", "high"), right = FALSE))
-  ## significance against this gene's own background of motif matches: robust
-  ## z of logit(P) over the distinct sites of the scanned windows (median, MAD);
-  ## z >= sig_z (default 2) marks a site that stands out from the locus
-  key  <- paste(res$genomic_start, res$genomic_end, res$motif_strand_genomic)
+  ## binding loci: overlapping hits of the TF (both strands, both databases, shifted
+  ## frames of one match) are one binding event. Distinct sites (one per span and
+  ## strand) are grouped greedily, best first: a hit joins a locus when it overlaps
+  ## the locus' best hit by >= locus_overlap (default 0.8) of the longer of the two.
+  ## A short core inside a longer, different match (e.g. 5 bp in 9 bp) stays apart.
   lp   <- stats::qlogis(pmin(pmax(res$binding_prob, 1e-6), 1 - 1e-6))
-  best <- tapply(lp, key, max)                       # one value per distinct site
+  if ("genomic_start" %in% names(res)) {
+    key <- paste(res$genomic_start, res$genomic_end, res$motif_strand_genomic)
+    o   <- order(-lp); first <- o[!duplicated(key[o])]
+    loc <- .site_loci(res$genomic_start[first], res$genomic_end[first], lp[first],
+                      getOption("promotif.locus_overlap", 0.8))
+    res$locus <- loc[match(key, key[first])]
+  } else res$locus <- seq_len(nrow(res))
+  ## significance against this gene's own background of motif matches: robust
+  ## z of logit(P) over the binding loci of the scanned windows (median, MAD);
+  ## z >= sig_z (default 2) marks a locus that stands out from the gene
+  best <- tapply(lp, res$locus, max)                 # one value per binding locus
   sc   <- stats::mad(best); if (!is.finite(sc) || sc <= 0) sc <- stats::sd(best)
   if (!is.finite(sc) || sc <= 0) sc <- 1
   sig_z <- getOption("promotif.sig_z", 2)
@@ -93,40 +114,82 @@ score_binding_sites <- function(scan, weights = getOption("promotif.score_weight
   scan$result <- res
   scan$meta$score_weights <- w
   scan$meta$score_cutoff  <- res$score_cutoff[1]; scan$meta$sig_z <- sig_z
-  scan$sites  <- .site_table(scan)
+  st <- .site_table(scan)
+  scan$hits  <- attr(st, "hits"); if (!is.null(st)) attr(st, "hits") <- NULL
+  scan$sites <- st
   scan
 }
 
-## One row per distinct genomic site (the same motif span re-found in several TSS
-## windows is one site), ranked by binding probability.
+## Greedy grouping of hits into binding loci (best first): returns a locus number
+## per hit (1 = the locus of the best hit). A hit joins the current seed's locus
+## when their overlap is >= frac of the longer of the two spans.
+.site_loci <- function(start, end, score, frac = 0.8) {
+  n <- length(start); lab <- integer(n); len <- end - start + 1; k <- 0L
+  for (i in order(-score)) {
+    if (lab[i]) next
+    k <- k + 1L
+    ov <- pmin(end, end[i]) - pmax(start, start[i]) + 1
+    lab[lab == 0L & ov >= frac * pmax(len, len[i])] <- k
+  }
+  lab
+}
+
+## One row per binding locus, ranked by binding probability. A locus is the best
+## hit of a group of overlapping hits (see score_binding_sites); its coordinates,
+## motif and scores are those of the best hit, locus_start / locus_end span all of
+## its hits (useful for primer design), databases / matrix_ids / hit_motifs list
+## them, motif_prob is the best motif-only probability among them. The hit-level
+## table (every distinct span and strand, with its locus) is attr(, "hits").
 .site_table <- function(scan) {
   res <- scan$result; m <- scan$meta
   if (is.null(res) || !nrow(res) || !"genomic_start" %in% names(res)) return(NULL)
+  if (is.null(res$locus)) res$locus <- seq_len(nrow(res))
   key <- paste(res$genomic_start, res$genomic_end, res$motif_strand_genomic)
   o   <- order(key, -res$binding_prob, res$pvalue, -res$score_frac)
   r   <- res[o, , drop = FALSE]; key <- key[o]
-  best <- r[!duplicated(key), , drop = FALSE]
-  agg  <- function(col) tapply(r[[col]], key, function(v) paste(sort(unique(v)), collapse = ";"))
-  bk <- key[!duplicated(key)]
-  best$databases  <- agg("database")[bk]
-  best$matrix_ids <- agg("matrix_id")[bk]
-  best$in_promoter_windows <- if ("in_promoter_windows" %in% names(r))
+  hit <- r[!duplicated(key), , drop = FALSE]          # one row per distinct span + strand
+  agg <- function(col) tapply(r[[col]], key, function(v) paste(sort(unique(v)), collapse = ";"))
+  hk  <- key[!duplicated(key)]
+  hit$databases  <- agg("database")[hk]
+  hit$matrix_ids <- agg("matrix_id")[hk]
+  hit$in_promoter_windows <- if ("in_promoter_windows" %in% names(r))
     tapply(r$in_promoter_windows, key, function(v)
-      paste(sort(unique(unlist(strsplit(v, ";")))), collapse = ";"))[bk] else best$promoter_id
+      paste(sort(unique(unlist(strsplit(v, ";")))), collapse = ";"))[hk] else hit$promoter_id
   ## other database's motif within 10 bp on the same genomic strand
-  best$n_databases_nearby <- vapply(seq_len(nrow(best)), function(i) {
-    near <- abs(res$site_center - best$site_center[i]) <= 10 &
-            res$motif_strand_genomic == best$motif_strand_genomic[i]
+  hit$n_databases_nearby <- vapply(seq_len(nrow(hit)), function(i) {
+    near <- abs(res$site_center - hit$site_center[i]) <= 10 &
+            res$motif_strand_genomic == hit$motif_strand_genomic[i]
     length(unique(res$database[near])) }, integer(1))
-  best <- best[order(-best$binding_prob, best$pvalue, -best$score_frac), , drop = FALSE]
-  best$rank    <- seq_len(nrow(best))
-  best$site_id <- paste0("S", best$rank)
-  best$gene <- m$gene; best$tf <- m$tf
-  best$chrom <- paste0("chr", sub("^chr", "", m$chr))
-  best$position_rel_tss <- as.integer(best$position)
+  hit$gene <- m$gene; hit$tf <- m$tf
+  hit$chrom <- paste0("chr", sub("^chr", "", m$chr))
+  hit$position_rel_tss <- as.integer(hit$position)
   for (cc in c("genomic_start", "genomic_end", "genomic_position", "chip_n_exp"))
-    if (cc %in% names(best)) best[[cc]] <- as.integer(round(best[[cc]]))
+    if (cc %in% names(hit)) hit[[cc]] <- as.integer(round(hit[[cc]]))
+  hit <- hit[order(-hit$binding_prob, hit$pvalue, -hit$score_frac), , drop = FALSE]
+
+  ## loci: best hit of each locus, with the evidence of all its hits
+  lo <- hit[!duplicated(hit$locus), , drop = FALSE]
+  by_l <- split(seq_len(nrow(hit)), hit$locus)[as.character(lo$locus)]
+  cat_u <- function(v) paste(sort(unique(unlist(strsplit(as.character(v), ";")))), collapse = ";")
+  lo$locus_start <- vapply(by_l, function(i) min(hit$genomic_start[i]), integer(1))
+  lo$locus_end   <- vapply(by_l, function(i) max(hit$genomic_end[i]), integer(1))
+  lo$n_hits      <- lengths(by_l)
+  lo$hit_strands <- vapply(by_l, function(i) cat_u(hit$motif_strand_genomic[i]), "")
+  lo$hit_motifs  <- vapply(by_l, function(i) paste(sprintf("%s(%s)", hit$site_motif[i],
+                                                           hit$motif_strand_genomic[i]), collapse = ";"), "")
+  lo$databases   <- vapply(by_l, function(i) cat_u(hit$databases[i]), "")
+  lo$matrix_ids  <- vapply(by_l, function(i) cat_u(hit$matrix_ids[i]), "")
+  lo$in_promoter_windows <- vapply(by_l, function(i) cat_u(hit$in_promoter_windows[i]), "")
+  lo$n_databases_nearby  <- vapply(by_l, function(i) max(hit$n_databases_nearby[i]), integer(1))
+  if ("motif_prob" %in% names(hit))
+    lo$motif_prob <- vapply(by_l, function(i) max(hit$motif_prob[i]), numeric(1))
+  lo$rank    <- seq_len(nrow(lo))
+  lo$site_id <- paste0("S", lo$rank)
+  hit$site_id <- lo$site_id[match(hit$locus, lo$locus)]        # locus each hit belongs to
+  hit$hit_id  <- paste0("H", seq_len(nrow(hit)))
+
   keep <- c("site_id", "rank", "gene", "tf", "chrom", "genomic_start", "genomic_end",
+            "locus_start", "locus_end", "n_hits", "hit_strands", "hit_motifs",
             "motif_strand_genomic", "site_center", "genomic_position", "promoter_id",
             "in_promoter_windows", "transcript_id", "position_rel_tss",
             "databases", "matrix_ids", "n_databases_nearby",
@@ -134,8 +197,11 @@ score_binding_sites <- function(scan, weights = getOption("promotif.score_weight
             "score_frac", "pvalue", "qvalue", "motif_strength", "db_agreement", "motif_prob",
             "chip_n_exp", "chip_support", "chip_support_all", "chip_replication", "chip_summit_dist", "chip_cell_types",
             "binding_prob", "confidence", "score_z", "significant")
-  out <- best[, intersect(keep, names(best)), drop = FALSE]
-  rownames(out) <- NULL
+  out <- lo[, intersect(keep, names(lo)), drop = FALSE]; rownames(out) <- NULL
+  hk2 <- c("hit_id", "site_id", setdiff(keep, c("site_id", "rank", "locus_start", "locus_end",
+                                                "n_hits", "hit_strands", "hit_motifs")))
+  hits <- hit[, intersect(hk2, names(hit)), drop = FALSE]; rownames(hits) <- NULL
+  attr(out, "hits") <- hits
   out
 }
 
