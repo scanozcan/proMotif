@@ -9,8 +9,8 @@ Description: Find and rank transcription-factor binding sites in the promoters
     symbol and a TF, it retrieves the gene's transcription start sites from
     Ensembl or EPDnew, groups them into promoters, scans each promoter window on
     both strands, and reports every predicted site with its exact genomic
-    coordinates, sequence and per-site p-value. Sites are ranked by a binding
-    probability that combines motif strength, agreement between the two motif
+    coordinates, sequence and per-site p-value. Sites are ranked by the
+    proMotif score, a bounded evidence score that combines motif strength, agreement between the two motif
     databases and public ChIP-seq evidence from ChIP-Atlas (summit proximity
     and the number of supporting experiments), with ChIP-Atlas downloads limited
     to a user-defined data budget. A discovery mode ranks a gene's candidate

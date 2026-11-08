@@ -130,7 +130,7 @@ plot_promoter_track <- function(gene, species = "homo_sapiens", tss_source = c("
     }
   }
 
-  th <- theme_bw(base_size = base_size) +
+  th <- theme_bw(base_size = .tsz(base_size)) +
     theme(panel.grid.minor = element_blank(), panel.grid.major.y = element_blank(),
           strip.background = element_rect(fill = "grey92", color = NA),
           strip.text.y = element_text(angle = 0), legend.position = "none")
@@ -178,7 +178,7 @@ plot_promoter_track <- function(gene, species = "homo_sapiens", tss_source = c("
     geom_segment(aes(x = kb(x), xend = kb(x), y = 1, yend = ly - 0.15, color = promoter_id),
                  linewidth = 0.3, linetype = 3) +
     geom_text(aes(x = kb(x), y = ly, label = lab, color = promoter_id, hjust = hj),
-              size = base_size / 3.4, fontface = "bold") +
+              size = .tsz(base_size) / 3.4, fontface = "bold") +
     scale_color_manual(values = pcol) + scale_fill_manual(values = pcol) + xs +
     scale_y_continuous(limits = c(-0.5, 1.5 + 0.55 * min(np, 3))) + labs(x = NULL, y = "promoters") + th +
     theme(axis.text = element_blank(), axis.ticks = element_blank(), panel.grid = element_blank())
@@ -189,7 +189,7 @@ plot_promoter_track <- function(gene, species = "homo_sapiens", tss_source = c("
                              fill = promoter_id), color = NA) +
     geom_text(data = tx, aes(x = kb(tss) - kb(strand * 0.004 * span), y = row,
                              label = paste0(transcript_id, ifelse(canonical, "*", ""), .bt_abbrev(biotype))),
-              hjust = if (strand == 1) 1 else 0, size = base_size / 4.2, color = "grey20") +
+              hjust = if (strand == 1) 1 else 0, size = .tsz(base_size) / 4.2, color = "grey20") +
     scale_color_manual(values = pcol) + scale_fill_manual(values = pcol) + xs +
     labs(x = sprintf("chr%s position (kb)", chr), y = NULL,
          caption = "* canonical (Ensembl) | NMD nonsense-mediated decay, RI retained intron, nc non-coding | colours: promoter a transcript starts from (grey: none)") +

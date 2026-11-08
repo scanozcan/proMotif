@@ -19,6 +19,7 @@
 ## ggplot2 aesthetics reference data-frame columns by bare name; declare them
 ## so R CMD check does not flag "no visible binding for global variable".
 utils::globalVariables(c("base", "biotype", "canonical", "end", "grp", "hj", "ly",
+                         "evid", "lp", "motif0", "score_best", "status_lab", "yf",
                          "promoter_id", "psize", "ring_type", "start", "summit", "tpm",
                          "transcript_id", "tss_max", "tss_min",
                          "position", "score_frac", "database", "strand",
@@ -432,3 +433,32 @@ utils::globalVariables(c("base", "biotype", "canonical", "end", "grp", "hj", "ly
   if (!is.null(pinfo) && nchar(pinfo$seq %||% "") > 10) saveRDS(pinfo, f)
   pinfo
 }
+
+## Text size of all plots: base_size x options(promotif.text_scale) (default 1.2),
+## so axis labels stay legible when panels are combined into a figure. Plot
+## width and height are not changed.
+.tsz <- function(base_size) base_size * getOption("promotif.text_scale", 1.2)
+
+## ggsave() that does not stop a run when a plot does not fit its page
+## ("Viewport has zero dimension(s)", e.g. long labels at a larger text size):
+## it retries on a larger page (x1.25 wide, x1.5 high, twice), then warns and
+## goes on with the remaining files.
+.ggsave_safe <- function(filename, plot, width, height, ...) {
+  err <- NULL
+  for (k in 0:2) {
+    ok <- tryCatch({
+      args <- utils::modifyList(list(limitsize = FALSE), list(...))
+      do.call(ggplot2::ggsave, c(list(filename = filename, plot = plot,
+                                      width = width * 1.25^k, height = height * 1.5^k), args))
+      TRUE
+    }, error = function(e) { err <<- conditionMessage(e); FALSE })
+    if (ok) {
+      if (k > 0) message(sprintf("  %s: enlarged to %.1f x %.1f in to fit", basename(filename),
+                                 width * 1.25^k, height * 1.5^k))
+      return(invisible(filename))
+    }
+  }
+  warning(sprintf("could not save %s: %s", basename(filename), err), call. = FALSE)
+  invisible(NULL)
+}
+

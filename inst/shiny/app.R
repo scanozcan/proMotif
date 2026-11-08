@@ -251,7 +251,7 @@ server <- function(input, output, session) {
         log_tab))
   })
 
-  ## ---- top sites: probability map without the ChIP track (one ggplot, so
+  ## ---- top sites: score map without the ChIP track (one ggplot, so
   ## hover coordinates map to the data); tooltip = site, coordinates, sequence
   top_plot_rv <- reactive({
     req(ok()); r <- run_rv(); req(r$mode == "confirm")
@@ -293,7 +293,7 @@ server <- function(input, output, session) {
       if (!is.null(s$chip_n_exp)) sprintf("ChIP: %s experiment(s), support %s, summit %s bp away<br>",
                                           s$chip_n_exp, num(s$chip_support, "%.2f"),
                                           num(s$chip_summit_dist, "%.0f")) else "",
-      sprintf("<b>binding probability %s</b> (%s)", num(s$binding_prob, "%.2f"), s$confidence))
+      sprintf("<b>proMotif score %s</b> (%s)", num(s$promotif_score, "%.2f"), s$confidence))
     left <- h$coords_css$x + 14; top <- h$coords_css$y + 14
     div(style = sprintf(paste0("position:absolute; left:%dpx; top:%dpx; z-index:100;",
                                "background:rgba(255,255,255,0.96); border:1px solid #bbb;",
@@ -307,7 +307,7 @@ server <- function(input, output, session) {
     req(t)
     t[, intersect(c("site_id", "chrom", "genomic_start", "genomic_end", "motif_strand_genomic",
                     "promoter_id", "position_rel_tss", "databases", "site_motif", "context_genomic",
-                    "pvalue", "qvalue", "chip_n_exp", "chip_support", "binding_prob", "confidence"),
+                    "pvalue", "qvalue", "chip_n_exp", "chip_support", "promotif_score", "confidence"),
                   names(t)), drop = FALSE]
   }, digits = 3)
   output$dl_top <- downloadHandler(
@@ -377,7 +377,7 @@ server <- function(input, output, session) {
       confirm = c("promoter_id", "transcript_id", "is_canonical", "database", "matrix_id",
                   "position", "strand", "score_frac", "pvalue", "qvalue",
                   "genomic_start", "genomic_end", "site_motif", "chip_n_exp", "chip_support",
-                  "binding_prob", "confidence", "chip_cell_types"),
+                  "promotif_score", "confidence", "chip_cell_types"),
       discover = c("promoter_id", "tf", "family", "matrix_id", "position", "strand", "score_frac",
                    "pvalue", "bg_pvalue", "bg_qvalue", "n_at_site", "shares_site_with",
                    "chip_n_exp", "chip_frac_exp"),

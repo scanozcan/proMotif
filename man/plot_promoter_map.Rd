@@ -12,7 +12,7 @@ plot_promoter_map(
   chip_ring_p = 0.001,
   chip_ring_min_exp = 1,
   facet_regions = TRUE,
-  y_metric = c("p", "probability"),
+  y_metric = c("p", "score", "probability"),
   label_top = 0,
   chip_track = TRUE
 )
@@ -34,9 +34,9 @@ ChIP experiments (default 1).}
 \item{facet_regions}{One panel per promoter when there are several
 (default \code{TRUE}); \code{FALSE} draws one continuous axis.}
 
-\item{y_metric}{`"p"` (-log10 per-site p, default) or `"probability"` (binding probability).}
+\item{y_metric}{`"p"` (-log10 per-site p, default) or `"score"` (proMotif score; `"probability"` is accepted as the old name).}
 
-\item{label_top}{Number of top sites to label with ggrepel (default 0; used with `y_metric = "probability"`).}
+\item{label_top}{Number of top sites to label with ggrepel (default 0; used with `y_metric = "score"`).}
 
 \item{chip_track}{Draw the ChIP-Atlas coverage panel under the map (default `TRUE`).}
 }

@@ -4,12 +4,12 @@
 \alias{top_binding_sites}
 \title{Top binding sites of a scan}
 \usage{
-top_binding_sites(scan, min_prob = 0.5, min_n = 10)
+top_binding_sites(scan, min_score = 0.5, min_n = 10)
 }
 \arguments{
 \item{scan}{A scan from [scan_binding_sites()] (optionally with [add_chip_peaks()]).}
 
-\item{min_prob}{Minimum binding probability (default 0.5).}
+\item{min_score}{Minimum proMotif score (default 0.5).}
 
 \item{min_n}{Minimum number of sites returned (default 10).}
 }
@@ -17,7 +17,7 @@ top_binding_sites(scan, min_prob = 0.5, min_n = 10)
 A data frame (see the README for the columns).
 }
 \description{
-The likely binding sites: binding probability >= `min_prob`, and at least
+The likely binding sites: proMotif score >= `min_score`, and at least
 the `min_n` best sites. One row per distinct site with exact genomic
-coordinates, sequences, p- and q-values, evidence layers and probability.
+coordinates, sequences, p- and q-values, evidence layers and proMotif score.
 }

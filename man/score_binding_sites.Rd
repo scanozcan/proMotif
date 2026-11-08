@@ -2,7 +2,7 @@
 % Please edit documentation in R/probability.R
 \name{score_binding_sites}
 \alias{score_binding_sites}
-\title{Binding probability of predicted sites}
+\title{proMotif score of predicted sites}
 \usage{
 score_binding_sites(scan, weights = getOption("promotif.score_weights"))
 }
@@ -12,18 +12,19 @@ score_binding_sites(scan, weights = getOption("promotif.score_weights"))
 \item{weights}{Optional named list overriding `intercept`, `motif`,
 `databases`, `chip`, `replication`; default
 `getOption("promotif.score_weights")`. Significance thresholds:
-`options(promotif.sig_z = 2, promotif.sig_min_prob = 0.5)`.}
+`options(promotif.sig_z = 2, promotif.sig_min_score = 0.5)`.}
 }
 \value{
-The scan with `motif_strength`, `db_agreement`, `motif_prob`,
-  `binding_prob`, `confidence`, `score_z`, `significant` and `locus` added to
+The scan with `motif_strength`, `db_agreement`, `motif_only_score`,
+  `promotif_score`, `confidence`, `score_z`, `significant` and `locus` added to
   `scan$result`; the ranked binding loci in `scan$sites` (best hit of each
   locus, with `locus_start`, `locus_end`, `n_hits`, `hit_motifs`, `databases`)
   and every distinct hit, with its locus (`site_id`), in `scan$hits`.
 }
 \description{
-Combines the evidence for every predicted site of a scan on the logit scale:
-\deqn{logit P = \beta_0 + \beta_m m + \beta_a a + \beta_S S + \beta_R R}
+Combines the evidence for every predicted site of a scan into one score
+between 0 and 1:
+\deqn{B = 1 / (1 + e^{-L}), \quad L = \beta_0 + \beta_m m + \beta_a a + \beta_S S + \beta_R R}
 with defaults \eqn{\beta_0 = -3, \beta_m = 4, \beta_a = 0.5, \beta_S = 2.5,
 \beta_R = 2}.
 \itemize{
@@ -39,12 +40,13 @@ with defaults \eqn{\beta_0 = -3, \beta_m = 4, \beta_a = 0.5, \beta_S = 2.5,
     peak over the site (Hill curve, 0.5 at 20 experiments), scaled by the
     site's relative motif strength.
 }
-A perfect motif without ChIP-seq data reaches P = 0.73 (0.82 if both
-databases agree). `motif_prob` is the same score without the ChIP terms.
-Sites are `high` (P >= 0.8), `medium` (>= 0.5) or `low` confidence, and
-`significant` when their robust z-score of logit P against all binding loci
-of the scanned windows is >= 2 and P >= 0.5. The weights are set by design,
-not fitted: P is a transparent evidence score, not a calibrated posterior.
+A perfect motif without ChIP-seq data reaches B = 0.73 (0.82 if both
+databases agree). `motif_only_score` is the same score without the ChIP terms.
+Sites are `high` (B >= 0.8), `medium` (>= 0.5) or `low` confidence, and
+`significant` when their robust z-score of L against all binding loci
+of the scanned windows is >= 2 and B >= 0.5. The weights are set by design,
+not fitted: the proMotif score is a transparent evidence score for ranking
+sites, not a probability that a site is bound.
 }
 \details{
 Binding loci: overlapping hits of the TF (the two strands of a palindrome,
@@ -52,7 +54,7 @@ the JASPAR and HOCOMOCO matrices, shifted frames of one match) are one
 binding event. Hits are grouped greedily, best first; a hit joins a locus when
 it overlaps the locus' best hit by at least `options(promotif.locus_overlap)`
 (default 0.8) of the longer of the two spans, so a short core inside a longer,
-different match stays separate. A locus takes the binding probability of its
+different match stays separate. A locus takes the proMotif score of its
 best hit.
 
 Called automatically by [scan_binding_sites()] and [add_chip_peaks()].

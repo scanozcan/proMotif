@@ -2,26 +2,38 @@
 % Please edit documentation in R/discover.R
 \name{run_regulator_discovery}
 \alias{run_regulator_discovery}
-\title{Discover candidate regulators, plot, and write files}
+\title{Discover the regulators of a gene, score them, plot, and write files}
 \usage{
 run_regulator_discovery(
   gene,
   species = "homo_sapiens",
   upstream = 2500,
   downstream = 500,
-  top_n = 20,
+  top_n = 15,
   out_root = "results",
   write_files = TRUE,
   base_size = 12,
   point_size = 3,
   chip = FALSE,
-  chip_distance = 1,
   chip_cell_pattern = NULL,
   chip_max_mb = 300,
-  expand_top = 5,
-  expand_threshold = 0.8,
+  rule = c("regulators", "specific"),
+  n_chip = 5,
+  n_motif = 2,
+  shortlist_bg_p = 0.2,
+  shortlist_p = 1e-04,
+  min_bound = 2,
+  screen_kb = 5,
+  n_per_promoter = 3,
+  max_bg_p = 0.01,
+  min_pref = 1,
+  expand_threshold = 0.75,
   expand_tfs = NULL,
-  expand_by = "auto",
+  label_top = 10,
+  color_seed = NULL,
+  chip_distance = NULL,
+  expand_top = NULL,
+  expand_by = NULL,
   ...
 )
 }
@@ -32,47 +44,57 @@ run_regulator_discovery(
 
 \item{upstream, downstream}{Promoter window around the canonical TSS (bp).}
 
-\item{top_n}{How many representative TFs to return in \code{top} / plot.}
+\item{top_n}{Rows per promoter in the candidate plot (15).}
 
 \item{out_root}{Output folder (default \code{"results"}).}
 
-\item{write_files}{Write the CSV and PDFs (default TRUE).}
+\item{write_files}{Write the CSVs and PDFs (default TRUE).}
 
 \item{base_size, point_size}{Plot font and marker size.}
 
-\item{chip}{Add ChIP-Atlas Target Genes support for the top TFs
-(\code{\link{add_chip_targets}}; default \code{FALSE}).}
-
-\item{chip_distance}{1, 5 or 10 kb around the TSS.}
+\item{chip}{ChIP-Atlas evidence: Target Genes screen and promoter-resolved
+peaks in the targeted scans (default FALSE = motif evidence only).}
 
 \item{chip_cell_pattern}{Optional regular expression restricting ChIP
 experiments to cell types.}
 
-\item{chip_max_mb}{Skip ChIP-Atlas files larger than this (MB).}
+\item{chip_max_mb}{ChIP-Atlas download budget per TF (MB).}
 
-\item{expand_top}{Run the targeted scan (\code{\link{expand_regulators}})
-for this many top TFs and write their promoter maps (with ChIP-Atlas track
-and rings when \code{chip = TRUE}) to \code{top_TFs/} (default 5; 0 = off).}
+\item{rule}{\code{"regulators"} (default) or \code{"specific"}.}
 
-\item{expand_threshold}{PWM threshold for those targeted scans (default 0.80).}
+\item{n_chip, n_motif, shortlist_bg_p, shortlist_p, min_bound, screen_kb}{See
+\code{\link{select_regulators}}.}
 
-\item{expand_tfs}{Optional TFs to expand instead of the top ones.}
+\item{n_per_promoter, max_bg_p, min_pref}{See \code{\link{select_candidates}}.}
 
-\item{expand_by}{How to pick the top TFs: \code{"auto"}, \code{"rank"} or
-\code{"chip"} (see \code{\link{expand_regulators}}).}
+\item{expand_threshold}{PWM threshold of the targeted scans (0.75).}
+
+\item{expand_tfs}{TFs to score in addition to the selected ones.}
+
+\item{label_top}{Labelled sites in the top-sites plots (10).}
+
+\item{color_seed}{Seed for the database colours of the top-sites plots.}
+
+\item{chip_distance, expand_top, expand_by}{No longer used (kept for old calls).}
 
 \item{...}{Passed to \code{\link{discover_regulators}}.}
 }
 \value{
-Invisibly, a list with \code{result}, \code{top}, \code{plots}, \code{meta}.
+Invisibly, a list with \code{result}, \code{candidates}, \code{top},
+  \code{plots}, \code{meta}, \code{promoters}, \code{expanded}.
 }
 \description{
-Convenience wrapper: runs \code{\link{discover_regulators}}, builds the plots
-with \code{\link{plot_regulators}}, and (by default) writes a CSV plus the
-three PDFs to \code{results/<GENE>_regulators/}.
+Runs \code{\link{discover_regulators}}, selects TFs per promoter
+(\code{rule = "regulators"}: \code{\link{select_regulators}};
+\code{rule = "specific"}: \code{\link{select_candidates}}), scores them with
+the targeted scan and ChIP-Atlas (\code{\link{expand_regulators}},
+\code{\link{summarise_candidates}}), and writes to
+\code{<out_root>/<GENE>_regulators/}: \code{_discovery_regulators.pdf},
+\code{_discovery_candidates.pdf/.csv}, \code{_candidate_regulators.csv} and
+\code{top_TFs/<TF>/} (top-sites plot and table per scored TF).
 }
 \examples{
 \dontrun{
-run_regulator_discovery("SNCA", top_n = 25)
+run_regulator_discovery("TFF1", tss_source = "epd", chip = TRUE)
 }
 }

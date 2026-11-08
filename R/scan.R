@@ -221,5 +221,5 @@ scan_binding_sites <- function(gene, tf,
                    jaspar_release = jaspar_release, hocomoco_version = hocomoco_version,
                    n_promoters = nrow(prom$promoters),
                    n_regions = length(unique(prom$promoters$region)), flank = flank))
-  score_binding_sites(scan)                  # motif probability (ChIP added later)
+  score_binding_sites(scan)                  # motif-only score (ChIP added later)
 }

@@ -34,7 +34,7 @@ plot_binding_sites <- function(scan, base_size = 12, point_size = 2.6,
   result$transcript_label <- factor(.wrap_lab(result$transcript_label), levels = wlev)
 
   shape_vals <- c("+" = 16, "-" = 17)
-  base_theme <- theme_bw(base_size = base_size) +
+  base_theme <- theme_bw(base_size = .tsz(base_size)) +
     theme(panel.grid.minor = element_blank(),
           plot.title    = element_text(size = rel(0.95)),
           plot.subtitle = element_text(size = rel(0.78)))
@@ -68,7 +68,7 @@ plot_binding_sites <- function(scan, base_size = 12, point_size = 2.6,
       sprintf("window -%d/+%d bp around each TSS | threshold %.2f",
               upstream, downstream, threshold_frac)) +
     facet_wrap(~ transcript_label, ncol = 1, drop = FALSE) +
-    theme(strip.text = element_text(size = base_size - 4),
+    theme(strip.text = element_text(size = .tsz(base_size) - 4),
           strip.background = element_rect(fill = "grey92", color = NA))
 
   tss_lines <- data.frame(tss = reps$tss, is_canonical = reps$is_canonical)
@@ -130,7 +130,7 @@ plot_binding_sites <- function(scan, base_size = 12, point_size = 2.6,
     sig$by_transcript_sig <- sig_landscape(result,
         sprintf("%s binding-site significance across %s transcripts", tf, gene)) +
       facet_wrap(~ transcript_label, ncol = 1, drop = FALSE) +
-      theme(strip.text = element_text(size = base_size - 4),
+      theme(strip.text = element_text(size = .tsz(base_size) - 4),
             strip.background = element_rect(fill = "grey92", color = NA))
     gresult$neglogq <- -log10(pmax(gresult$pvalue, 1e-300))
     sig_arrows <- data.frame(x = can_tss, xend = can_tss + dir * 0.05 * diff(grng),

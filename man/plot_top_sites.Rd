@@ -33,9 +33,9 @@ annotated by \code{\link{add_chip_peaks}}).}
 A ggplot (or patchwork with the ChIP panel).
 }
 \description{
-Genomic map of a scan with the binding probability on the y axis, the
+Genomic map of a scan with the proMotif score on the y axis, the
 ChIP-Atlas peak coverage underneath (if added) and the `top_n` best sites
-labelled (site id, motif-oriented sequence, probability). Rings mark sites
+labelled (site id, motif-oriented sequence, score). Rings mark sites
 that are significant for the locus: black = inside a ChIP-Atlas peak,
 grey = motif evidence only.
 }

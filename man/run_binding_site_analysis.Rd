@@ -39,7 +39,7 @@ run_binding_site_analysis(
   usage_flank = 500,
   tss_source = c("ensembl", "epd"),
   flank = 10,
-  top_sites_min_prob = 0.5,
+  top_sites_min_score = 0.5,
   top_sites_min_n = 10,
   label_top = 10
 )
@@ -120,7 +120,7 @@ folder, see \code{\link{add_promoter_usage}}).}
 
 \item{flank}{Bases on each side of a site in the sequence context (default 10).}
 
-\item{top_sites_min_prob}{Binding probability for the top-sites table (default 0.5).}
+\item{top_sites_min_score}{proMotif score for the top-sites table (default 0.5).}
 
 \item{top_sites_min_n}{Minimum number of sites in the top-sites table (default 10).}
 

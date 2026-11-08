@@ -439,7 +439,7 @@ plot_regulators_chip <- function(disc, base_size = 12, point_size = 3) {
   has <- top$chip_available %in% TRUE
   av <- top[has, , drop = FALSE]; na <- top[!has, , drop = FALSE]
   na$y <- rep(-0.08, nrow(na))
-  base_theme <- theme_bw(base_size = base_size) +
+  base_theme <- theme_bw(base_size = .tsz(base_size)) +
     theme(panel.grid.minor = element_blank(),
           plot.title = element_text(size = rel(0.95)),
           plot.subtitle = element_text(size = rel(0.78)))
@@ -456,9 +456,9 @@ plot_regulators_chip <- function(disc, base_size = 12, point_size = 3) {
   lab <- rbind(if (nrow(av)) data.frame(x = av$neglogp, y = av$chip_frac_exp, l = av$tf),
                if (nrow(na)) data.frame(x = na$neglogp, y = na$y, l = na$tf))
   p <- p + (if (requireNamespace("ggrepel", quietly = TRUE))
-    ggrepel::geom_text_repel(data = lab, aes(x, y, label = l), size = base_size / 4,
+    ggrepel::geom_text_repel(data = lab, aes(x, y, label = l), size = .tsz(base_size) / 4,
                              min.segment.length = 0, max.overlaps = Inf, seed = 1)
-  else geom_text(data = lab, aes(x, y, label = l), vjust = -0.7, size = base_size / 4,
+  else geom_text(data = lab, aes(x, y, label = l), vjust = -0.7, size = .tsz(base_size) / 4,
                  check_overlap = TRUE))
   p + scale_y_continuous(breaks = c(0, .25, .5, .75, 1),
                          labels = function(x) paste0(round(100 * x), "%")) +

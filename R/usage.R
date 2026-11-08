@@ -133,7 +133,7 @@ add_promoter_usage <- function(scan, flank = 500, dir = NULL, min_tpm = 1,
                   .tss_tx_label(pr[1, , drop = FALSE], ntx[1], short = TRUE))
   ggplot(ex, aes(total_tpm, label)) +
     geom_col(aes(fill = lineage_lab), width = 0.75) +
-    geom_text(aes(label = sprintf("%.0f", total_tpm)), hjust = -0.15, size = base_size / 4.2, color = "grey30") +
+    geom_text(aes(label = sprintf("%.0f", total_tpm)), hjust = -0.15, size = .tsz(base_size) / 4.2, color = "grey30") +
     scale_x_log10(labels = function(x) format(x, big.mark = ",", scientific = FALSE, trim = TRUE),
                   expand = expansion(mult = c(0, 0.12))) +
     scale_fill_manual(values = stats::setNames(c(grDevices::hcl.colors(max(1, nlevels(ex$lineage_lab) - 1), "Dark 3"), "grey70")[seq_len(nlevels(ex$lineage_lab))],
@@ -143,7 +143,7 @@ add_promoter_usage <- function(scan, flank = 500, dir = NULL, min_tpm = 1,
          subtitle = sprintf("one promoter, so its share is 100%% wherever %s is expressed; top %d sample types by expression\nexpressed (>= %g TPM) in %d of %d sample types: %s",
                             m$gene, nrow(ex), u$min_tpm, sum(n_cat), nrow(tab),
                             paste(sprintf("%s %d", names(n_cat), as.integer(n_cat)), collapse = ", "))) +
-    theme_bw(base_size = base_size) +
+    theme_bw(base_size = .tsz(base_size)) +
     theme(panel.grid.minor = element_blank(), panel.grid.major.y = element_blank(),
           plot.title = element_text(size = rel(0.95)),
           plot.subtitle = element_text(size = rel(0.72)))
@@ -207,7 +207,7 @@ plot_promoter_usage <- function(scan, top_n = 10, base_size = 12) {
   ggplot(long, aes(frac, label)) +
     geom_col(aes(fill = promoter), width = 0.75) +
     geom_text(data = totals, aes(x = 1.02, y = label, label = sprintf("%.0f", total)),
-              hjust = 0, size = base_size / 4.2, color = "grey30", inherit.aes = FALSE) +
+              hjust = 0, size = .tsz(base_size) / 4.2, color = "grey30", inherit.aes = FALSE) +
     facet_grid(group ~ ., scales = "free_y", space = "free_y") +
     scale_fill_manual(values = .pal_promoters(64), labels = plab, name = "Promoter") +
     scale_x_continuous(labels = function(x) paste0(round(100 * x), "%"),
@@ -217,7 +217,7 @@ plot_promoter_usage <- function(scan, top_n = 10, base_size = 12) {
          title = sprintf("Where the %s promoters are used (FANTOM5 CAGE)", m$gene),
          subtitle = sprintf("CAGE peaks within %d bp of each promoter's TSSs | numbers = total TPM | %d of %d sample types express %s (>= %g TPM) | * = canonical",
                             u$flank, nrow(ex), nrow(tab), m$gene, u$min_tpm)) +
-    theme_bw(base_size = base_size) +
+    theme_bw(base_size = .tsz(base_size)) +
     theme(panel.grid.minor = element_blank(), panel.grid.major.y = element_blank(),
           plot.title = element_text(size = rel(0.95)),
           plot.subtitle = element_text(size = rel(0.72)),
@@ -330,7 +330,7 @@ plot_promoter_usage_cancer <- function(scan, min_n = 3, base_size = 12) {
     geom_point(aes(color = condition), position = position_jitterdodge(jitter.width = 0.15,
                dodge.width = 0.8, seed = 1), size = 1.2, alpha = 0.8) +
     geom_text(data = st, aes(lineage, y, label = label), inherit.aes = FALSE,
-              vjust = -0.6, size = base_size / 4.2, color = "grey25") +
+              vjust = -0.6, size = .tsz(base_size) / 4.2, color = "grey25") +
     facet_grid(panel ~ ., scales = "free_y") +
     scale_fill_manual(values = c(normal = "#4C9F70", cancer = "#C8553D")) +
     scale_color_manual(values = c(normal = "#2E6B47", cancer = "#8E3324")) +
@@ -339,7 +339,7 @@ plot_promoter_usage_cancer <- function(scan, min_n = 3, base_size = 12) {
          title = sprintf("%s promoter use: normal vs cancer, lineage-matched (FANTOM5 CAGE)", m$gene),
          subtitle = sprintf("normal = primary cells + tissues; cancer = cancer cell lines | points = sample types expressing %s (>= %g TPM) | lineages with >= %d per group | Wilcoxon | * = canonical",
                             m$gene, u$min_tpm, min_n)) +
-    theme_bw(base_size = base_size) +
+    theme_bw(base_size = .tsz(base_size)) +
     theme(panel.grid.minor = element_blank(),
           axis.text.x = element_text(angle = 35, hjust = 1),
           plot.title = element_text(size = rel(0.95)),

@@ -178,39 +178,41 @@ summarise_promoters <- function(scan) {
 #'   ChIP experiments (default 1).
 #' @param facet_regions One panel per promoter when there are several
 #'   (default \code{TRUE}); \code{FALSE} draws one continuous axis.
-#' @param y_metric `"p"` (-log10 per-site p, default) or `"probability"` (binding probability).
-#' @param label_top Number of top sites to label with ggrepel (default 0; used with `y_metric = "probability"`).
+#' @param y_metric `"p"` (-log10 per-site p, default) or `"score"` (proMotif score; `"probability"` is accepted as the old name).
+#' @param label_top Number of top sites to label with ggrepel (default 0; used with `y_metric = "score"`).
 #' @param chip_track Draw the ChIP-Atlas coverage panel under the map (default `TRUE`).
 #' @return A ggplot (or patchwork) object, or \code{NULL} if there are no sites.
 #' @export
 plot_promoter_map <- function(scan, base_size = 12, point_size = 2.6,
                               color_seed = NULL, chip_ring_p = 1e-3,
                               chip_ring_min_exp = 1, facet_regions = TRUE,
-                              y_metric = c("p", "probability"), label_top = 0,
+                              y_metric = c("p", "score", "probability"), label_top = 0,
                               chip_track = TRUE) {
   y_metric <- match.arg(y_metric)
+  if (y_metric == "probability") y_metric <- "score"   # old name
+  scan <- .compat_scores(scan)
   res <- scan$result; prom <- scan$promoters; m <- scan$meta
   if (is.null(prom) || is.null(res) || !nrow(res)) return(NULL)
   ## one point per distinct site; the same site re-found in several TSS windows
   ## has slightly different q-values (window-specific), keep its best copy
-  if ("binding_prob" %in% names(res)) res <- res[order(-res$binding_prob, res$pvalue), , drop = FALSE]
+  if ("promotif_score" %in% names(res)) res <- res[order(-res$promotif_score, res$pvalue), , drop = FALSE]
   g <- res[!duplicated(res[c("genomic_position", "strand", "database", "matrix_id")]), ,
            drop = FALSE]
   use_p <- "pvalue" %in% names(g) && any(is.finite(g$pvalue))
-  use_prob <- y_metric == "probability" && "binding_prob" %in% names(g) &&
-              any(is.finite(g$binding_prob))
-  ## probability plots: one point per binding locus (its best hit; res is ordered
-  ## by binding probability, so the first hit of each locus is the best)
-  if (use_prob && "locus" %in% names(g)) g <- g[!duplicated(g$locus), , drop = FALSE]
-  if (y_metric == "probability" && !use_prob)
-    message("  no binding probabilities (needs TFMPvalue) - plotting -log10 p instead.")
-  g$y  <- if (use_prob) g$binding_prob else if (use_p) -log10(pmax(g$pvalue, 1e-300)) else g$score_frac
-  ylab <- if (use_prob) "proMotif binding probability" else
+  use_score <- y_metric == "score" && "promotif_score" %in% names(g) &&
+              any(is.finite(g$promotif_score))
+  ## score plots: one point per binding locus (its best hit; res is ordered
+  ## by proMotif score, so the first hit of each locus is the best)
+  if (use_score && "locus" %in% names(g)) g <- g[!duplicated(g$locus), , drop = FALSE]
+  if (y_metric == "score" && !use_score)
+    message("  no proMotif scores (needs TFMPvalue) - plotting -log10 p instead.")
+  g$y  <- if (use_score) g$promotif_score else if (use_p) -log10(pmax(g$pvalue, 1e-300)) else g$score_frac
+  ylab <- if (use_score) "proMotif score" else
           if (use_p) "-log10 per-site p" else "PWM score (fraction of max)"
   if (!is.null(color_seed)) set.seed(as.integer(color_seed))
   db_cols <- setNames(sample(.palette_pool, 2), c("JASPAR", "HOCOMOCO"))
-  ybot   <- if (use_p || use_prob) 0 else m$threshold_frac
-  ylab_y <- ybot + ((if (use_prob) 1 else max(g$y, na.rm = TRUE)) - ybot) * 1.25  # promoter labels
+  ybot   <- if (use_p || use_score) 0 else m$threshold_frac
+  ylab_y <- ybot + ((if (use_score) 1 else max(g$y, na.rm = TRUE)) - ybot) * 1.25  # promoter labels
   ytop   <- ybot + (ylab_y - ybot) * 0.97                      # top of shading
 
   ## Independent regions, ordered left -> right on the chromosome. When there is
@@ -268,7 +270,7 @@ plot_promoter_map <- function(scan, base_size = 12, point_size = 2.6,
                            (if (facet) 0.08 else 0.05) * span,
                     y = y_arr, yend = y_arr, panel = factor(can_panel, levels = lev))
 
-  base_theme <- theme_bw(base_size = base_size) +
+  base_theme <- theme_bw(base_size = .tsz(base_size)) +
     theme(panel.grid.minor = element_blank(),
           plot.title = element_text(size = rel(0.95)),
           plot.subtitle = element_text(size = rel(0.78)))
@@ -282,9 +284,9 @@ plot_promoter_map <- function(scan, base_size = 12, point_size = 2.6,
     geom_segment(data = arr, aes(x = x, xend = xend, y = y, yend = yend),
                  arrow = grid::arrow(length = grid::unit(0.18, "cm"), type = "closed"),
                  color = "grey30", linewidth = 0.6, inherit.aes = FALSE) +
-    geom_label(data = rects, aes(x = tss, y = lab_y, label = lab), size = base_size / 3.8,
+    geom_label(data = rects, aes(x = tss, y = lab_y, label = lab), size = .tsz(base_size) / 3.8,
                label.size = 0, fill = "white", alpha = 0.85)
-  if (!use_prob && use_p) p <- p + geom_hline(yintercept = -log10(0.05), linetype = "dotted",
+  if (!use_score && use_p) p <- p + geom_hline(yintercept = -log10(0.05), linetype = "dotted",
                                       color = "grey50")
   ## labels for the top sites (ids match the _top_sites.csv table)
   ring <- if (has_chip) g$chip_supported %in% TRUE &
@@ -292,9 +294,9 @@ plot_promoter_map <- function(scan, base_size = 12, point_size = 2.6,
                         (if (use_p) g$pvalue <= chip_ring_p else TRUE)
           else logical(0)
   ring[is.na(ring)] <- FALSE
-  ## probability plots: rings mark sites that are significant for this locus
+  ## score plots: rings mark sites that are significant for this locus
   ## (black = also in a ChIP-Atlas peak, grey = motif evidence only)
-  sig_ring <- use_prob && "significant" %in% names(g)
+  sig_ring <- use_score && "significant" %in% names(g)
   ring_grey <- logical(nrow(g))
   if (sig_ring) {
     sg <- g$significant %in% TRUE
@@ -305,24 +307,24 @@ plot_promoter_map <- function(scan, base_size = 12, point_size = 2.6,
   ## marker: the label line ends at the ChIP ring if the site has one, else at
   ## the point itself (ggrepel point.size per label)
   lab <- NULL
-  if (label_top > 0 && use_prob && !is.null(scan$sites) && nrow(scan$sites)) {
+  if (label_top > 0 && use_score && !is.null(scan$sites) && nrow(scan$sites)) {
     st <- utils::head(scan$sites, label_top)
     ringed <- if (any(ring | ring_grey)) {
       rk <- paste(g$genomic_start, g$genomic_end, g$motif_strand_genomic)[ring | ring_grey]
       paste(st$genomic_start, st$genomic_end, st$motif_strand_genomic) %in% rk
     } else rep(FALSE, nrow(st))
-    lab <- data.frame(x = st$genomic_position, y = st$binding_prob,
-                      label = sprintf("%s %s %.2f", st$site_id, st$site_motif, st$binding_prob),
+    lab <- data.frame(x = st$genomic_position, y = st$promotif_score,
+                      label = sprintf("%s %s %.2f", st$site_id, st$site_motif, st$promotif_score),
                       psize = ifelse(ringed, point_size * 2.1, point_size))
     lab$panel <- .panel_at(lab$x)
     p <- p + (if (requireNamespace("ggrepel", quietly = TRUE))
       ggrepel::geom_label_repel(data = lab, aes(x, y, label = label, point.size = psize),
-                                size = base_size / 4.4, point.padding = 0,
+                                size = .tsz(base_size) / 4.4, point.padding = 0,
                                 min.segment.length = 0, max.overlaps = Inf, seed = 1,
                                 box.padding = 0.4, label.size = 0.15, fill = "white",
                                 alpha = 0.9, family = "mono")
       else geom_text(data = lab, aes(x, y, label = label), vjust = -0.8,
-                     size = base_size / 4.4, check_overlap = TRUE))
+                     size = .tsz(base_size) / 4.4, check_overlap = TRUE))
   }
   ## rings get their own legend (mapped to size, the one aesthetic the map does
   ## not use otherwise; the key colours are set with override.aes)
@@ -353,7 +355,7 @@ plot_promoter_map <- function(scan, base_size = 12, point_size = 2.6,
                  m$upstream, m$downstream, nrow(prom),
                  if (facet) "\none panel per promoter (the x axis is not continuous between panels)" else "",
                  "",
-                 if (use_prob || !has_chip) "" else
+                 if (use_score || !has_chip) "" else
                    sprintf("\nblack ring = in a ChIP-Atlas peak%s%s (%d of %d in-peak sites)",
                            if (use_p && chip_ring_p < 1) sprintf(" & p <= %g", chip_ring_p) else "",
                            if (chip_ring_min_exp > 1) sprintf(" & >= %d experiments",
@@ -370,7 +372,7 @@ plot_promoter_map <- function(scan, base_size = 12, point_size = 2.6,
     xscale + layout +
     labs(x = sprintf("Absolute position on chromosome %s (bp)", m$chr), y = ylab,
          shape = "Motif strand",
-         title = if (use_prob) sprintf("%s binding probability across the %s promoters", m$tf, m$gene)
+         title = if (use_score) sprintf("%s proMotif score across the %s promoters", m$tf, m$gene)
                  else sprintf("Predicted %s sites across the %s promoters", m$tf, m$gene),
          subtitle = sub) +
     base_theme + theme(axis.text.x = element_text(angle = 30, hjust = 1),
@@ -657,7 +659,7 @@ plot_promoter_regulators <- function(cmp, top_n = 30, base_size = 12) {
          subtitle = sprintf("window -%d/+%d bp; window p = chance a random window this size has a site this strong\npresent < %g, absent > %g | best matrix per TF | %d of %d motifs scanned | * = canonical | prioritisation, not binding",
                             m$upstream, m$downstream, m$present_p, m$absent_p,
                             m$n_tested, m$n_motifs)) +
-    theme_bw(base_size = base_size) +
+    theme_bw(base_size = .tsz(base_size)) +
     theme(panel.grid.minor = element_blank(),
           plot.title = element_text(size = rel(0.95)),
           plot.subtitle = element_text(size = rel(0.72)))
@@ -696,7 +698,7 @@ run_promoter_comparison <- function(gene, top_n = 30, out_root = "results",
     write.csv(cmp$long, file.path(out_dir, sprintf("%s_promoter_regulators_long.csv", gene)),
               row.names = FALSE)
     if (!is.null(plot))
-      ggsave(file.path(out_dir, sprintf("%s_promoter_regulators.pdf", gene)), plot,
+      .ggsave_safe(file.path(out_dir, sprintf("%s_promoter_regulators.pdf", gene)), plot,
              width = 4 + 2.2 * cmp$meta$n_regions,
              height = max(4, 0.28 * min(top_n, sum(cmp$comparison$class != "none")) + 2.2),
              limitsize = FALSE)
