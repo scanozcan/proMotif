@@ -4,13 +4,20 @@
 \alias{summarise_candidates}
 \title{Add proMotif scores to discovery candidates}
 \usage{
-summarise_candidates(cand, expanded)
+summarise_candidates(cand, expanded, promote_score = 0.5)
 }
 \arguments{
 \item{cand}{Result of \code{\link{select_regulators}} or
 \code{\link{select_candidates}}.}
 
 \item{expanded}{Named list of scans (\code{\link{expand_regulators}}).}
+
+\item{promote_score}{A scored TF whose targeted scan finds a ChIP-supported
+site (ChIP-Atlas peaks over it) with at least this proMotif score at a
+promoter where its motif alone did not shortlist it is reported there too
+(\code{route = "targeted scan"}; default 0.5, \code{NULL} = off). This
+keeps ChIP-supported sites with a weak motif, such as TP63 at the TP73 P2
+promoter.}
 }
 \value{
 \code{cand} with the score columns added.

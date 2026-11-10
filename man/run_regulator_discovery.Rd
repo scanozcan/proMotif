@@ -18,8 +18,8 @@ run_regulator_discovery(
   chip_cell_pattern = NULL,
   chip_max_mb = 300,
   rule = c("regulators", "specific"),
-  n_chip = 5,
-  n_motif = 2,
+  n_chip = "auto",
+  n_motif = "auto",
   shortlist_bg_p = 0.2,
   shortlist_p = 1e-04,
   min_bound = 2,
@@ -90,8 +90,16 @@ Runs \code{\link{discover_regulators}}, selects TFs per promoter
 the targeted scan and ChIP-Atlas (\code{\link{expand_regulators}},
 \code{\link{summarise_candidates}}), and writes to
 \code{<out_root>/<GENE>_regulators/}: \code{_discovery_regulators.pdf},
+\code{_discovery_promoter_specific.pdf/.csv} (several promoters),
 \code{_discovery_candidates.pdf/.csv}, \code{_candidate_regulators.csv} and
-\code{top_TFs/<TF>/} (top-sites plot and table per scored TF).
+\code{top_TFs/<TF>/} (top-sites plot, -log10 p promoter map and table per
+shown TF).
+}
+\details{
+How many TFs are shown per promoter is decided by the scores: the TFs whose
+best site there has a high proMotif score (>= 0.8; hits), plus two more, at
+least 5 and at most 10 (column \code{reported}). A promoter with 2-3 hits
+shows 5 TFs; one with 7 hits shows 9.
 }
 \examples{
 \dontrun{

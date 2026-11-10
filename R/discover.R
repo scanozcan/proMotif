@@ -459,13 +459,28 @@ plot_regulators <- function(disc, base_size = 12, point_size = 3) {
 #' \code{shortlist_p}; (2) ChIP screen - ChIP-Atlas Target Genes, the number of
 #' the TF's experiments with a peak within \code{screen_kb} kb of the gene's TSSs
 #' (one cached file per TF; TFs screened with the same ChIP-Atlas data, e.g. JUN
-#' and FOS::JUN, count once); (3) per promoter the \code{n_chip} TFs bound in
-#' most experiments (at least \code{min_bound}) and the \code{n_motif} best
-#' motif-only TFs are marked for scoring with the proMotif score.
+#' and FOS::JUN, count once); (3) per promoter, TFs are marked for scoring with
+#' the proMotif score. By default (\code{"auto"}) these are the
+#' \code{n_chip_pool} ChIP-bound TFs (at least \code{min_bound} experiments)
+#' with the largest share of their experiments bound near the gene (lower bound
+#' of the 95\% Wilson interval, so 3/3 does not beat 60/80) and the motif-only
+#' TFs with background \eqn{p \le} \code{motif_bg_p} (\code{n_motif_range});
+#' how many of the scored TFs are shown is decided afterwards from their
+#' proMotif scores (see \code{\link{run_regulator_discovery}}). Numbers for
+#' \code{n_chip} / \code{n_motif} give fixed counts (ChIP-bound TFs ranked by
+#' experiments bound). The screen also reports where the gene ranks among each
+#' TF's targets genome-wide (\code{screen_target_rank}, \code{screen_target_q}
+#' = rank / 20,094 genes).
 #'
 #' @param disc Result of \code{\link{discover_regulators}}.
 #' @param shortlist_bg_p,shortlist_p Motif shortlist thresholds (0.2, 1e-4).
-#' @param n_chip,n_motif TFs per promoter selected by ChIP screen and by motif (5, 2).
+#' @param n_chip,n_motif TFs per promoter selected by ChIP screen and by motif:
+#'   \code{"auto"} (default) or fixed numbers.
+#' @param n_chip_pool With \code{n_chip = "auto"}: ChIP-bound TFs scored per
+#'   promoter (8).
+#' @param motif_bg_p,n_motif_range With \code{n_motif = "auto"}: motif-only TFs
+#'   with background p at most \code{motif_bg_p} (0.01), at least / at most
+#'   \code{n_motif_range} (1-3; 3-7 without the ChIP screen).
 #' @param min_bound Minimum ChIP-Atlas experiments bound near the gene (2).
 #' @param screen Run the ChIP screen (default TRUE).
 #' @param screen_kb 1, 5 or 10 kb around the TSSs (Target Genes distance; 5).
@@ -480,7 +495,9 @@ plot_regulators <- function(disc, base_size = 12, point_size = 3) {
 #' @seealso \code{\link{summarise_candidates}}, \code{\link{run_regulator_discovery}}
 #' @export
 select_regulators <- function(disc, shortlist_bg_p = 0.2, shortlist_p = 1e-4,
-                              n_chip = 5, n_motif = 2, min_bound = 2,
+                              n_chip = "auto", n_motif = "auto", min_bound = 2,
+                              n_chip_pool = 8,
+                              motif_bg_p = 0.01, n_motif_range = c(1, 3),
                               screen = TRUE, screen_kb = 5, chip_cell_pattern = NULL,
                               screen_max_mb = 300, extra_tfs = NULL) {
   r <- disc$result
@@ -505,7 +522,8 @@ select_regulators <- function(disc, shortlist_bg_p = 0.2, shortlist_p = 1e-4,
   r <- r[!duplicated(r[c("promoter_id", "tf")]), , drop = FALSE]
   r$shortlisted <- r$p_rank <= shortlist_bg_p & r$pvalue <= shortlist_p
   ## ChIP screen of the shortlisted TFs (gene-level, ChIP-Atlas Target Genes)
-  scr_cols <- c("chip_tf_queried", "chip_available", "chip_n_exp", "chip_n_bound", "chip_frac_exp")
+  scr_cols <- c("chip_tf_queried", "chip_available", "chip_n_exp", "chip_n_bound", "chip_frac_exp",
+                "chip_target_rank", "chip_target_q")
   for (cc in scr_cols) r[[paste0("screen_", sub("^chip_", "", cc))]] <- NA
   if (isTRUE(screen)) {
     sc <- .chip_screen(unique(c(r$tf[r$shortlisted], extra_tfs)), disc$meta$gene,
@@ -518,10 +536,20 @@ select_regulators <- function(disc, shortlist_bg_p = 0.2, shortlist_p = 1e-4,
       r$screen_n_exp     <- sc$chip_n_exp[i]
       r$screen_n_bound   <- sc$chip_n_bound[i]
       r$screen_frac_exp  <- sc$chip_frac_exp[i]
+      r$screen_target_rank <- sc$chip_target_rank[i]
+      r$screen_target_q  <- sc$chip_target_q[i]
     }
   }
   bound <- r$shortlisted & !is.na(r$screen_n_bound) & r$screen_n_bound >= min_bound
   r$selected <- FALSE; r$route <- NA_character_
+  ## TFs to score per promoter. n_chip = "auto" (default): the n_chip_pool
+  ## ChIP-bound TFs with the largest share of their experiments bound near the
+  ## gene (Wilson lower bound, so 3/3 does not beat 60/80); n_motif = "auto":
+  ## every motif-only TF with background p <= motif_bg_p (n_motif_range). How
+  ## many of them are shown is decided after scoring (.report_candidates).
+  ## A number gives the old fixed count (ChIP-bound TFs by experiments bound).
+  auto_chip <- identical(n_chip, "auto"); auto_motif <- identical(n_motif, "auto")
+  if (auto_motif && !isTRUE(screen)) n_motif_range <- c(max(n_motif_range[1], 3), max(n_motif_range[2], 7))
   for (p in pids) {
     ib <- which(r$promoter_id == p & bound)
     ib <- ib[order(-r$screen_n_bound[ib], r$p_rank[ib])]
@@ -530,9 +558,16 @@ select_regulators <- function(disc, shortlist_bg_p = 0.2, shortlist_p = 1e-4,
     key <- r$screen_tf_queried[ib]
     ib <- ib[order(key, r$p_rank[ib])][!duplicated(key[order(key, r$p_rank[ib])])]
     ib <- ib[order(-r$screen_n_bound[ib], r$p_rank[ib])]
-    ib <- utils::head(ib, n_chip)
+    if (auto_chip) {
+      lb <- .wilson_lb(r$screen_n_bound[ib], r$screen_n_exp[ib])
+      ib <- utils::head(ib[order(-lb, -r$screen_n_bound[ib], r$p_rank[ib])], n_chip_pool)
+    } else ib <- utils::head(ib, n_chip)
     im <- which(r$promoter_id == p & r$shortlisted & !bound)
-    im <- utils::head(im[order(r$p_rank[im], r$pvalue[im])], n_motif)
+    im <- im[order(r$p_rank[im], r$pvalue[im])]
+    if (auto_motif) {
+      k <- min(max(sum(r$p_rank[im] <= motif_bg_p), n_motif_range[1]), n_motif_range[2], length(im))
+      im <- utils::head(im, k)
+    } else im <- utils::head(im, n_motif)
     r$selected[c(ib, im)] <- TRUE
     r$route[ib] <- "ChIP-bound"; r$route[im] <- "motif"
   }
@@ -546,13 +581,59 @@ select_regulators <- function(disc, shortlist_bg_p = 0.2, shortlist_p = 1e-4,
   r$rank_in_promoter <- stats::ave(r$p_rank, r$promoter_id, FUN = function(x) rank(x, ties.method = "first"))
   attr(r, "rule") <- list(mode = "regulators", shortlist_bg_p = shortlist_bg_p,
                           shortlist_p = shortlist_p, n_chip = n_chip, n_motif = n_motif,
+                          n_chip_pool = n_chip_pool,
+                          motif_bg_p = motif_bg_p, n_motif_range = n_motif_range,
                           min_bound = min_bound, screen = screen, screen_kb = screen_kb,
                           use_bg = use_bg, multi = multi,
-                          n_per_promoter = n_chip + n_motif, max_bg_p = shortlist_bg_p,
+                          n_per_promoter = if (is.numeric(n_chip) && is.numeric(n_motif)) n_chip + n_motif else NA,
+                          max_bg_p = shortlist_bg_p,
                           min_pref = NA)
   rownames(r) <- NULL
   r
 }
+
+## Lower bound of the 95% Wilson interval of k / n (share of experiments bound)
+.wilson_lb <- function(k, n, z = 1.96) {
+  k <- as.numeric(k); n <- as.numeric(n)
+  out <- rep(0, length(k)); ok <- !is.na(k) & !is.na(n) & n > 0
+  p <- k[ok] / n[ok]; nn <- n[ok]
+  out[ok] <- (p + z^2 / (2 * nn) - z * sqrt(p * (1 - p) / nn + z^2 / (4 * nn^2))) / (1 + z^2 / nn)
+  out
+}
+
+## How many scored TFs to show per promoter, decided by the scores: the hits
+## (best proMotif score >= hit_score, 0.8 = high confidence) plus `extra` more, at least show_range[1]
+## and at most show_range[2]; adds cand$reported.
+.report_candidates <- function(cand, hit_score = 0.8, extra = 2, show_range = c(5, 10)) {
+  if (is.null(cand) || !nrow(cand)) return(cand)
+  cand$reported <- FALSE
+  for (p in unique(cand$promoter_id)) {
+    i <- which(cand$promoter_id == p & cand$selected & !is.na(cand$score_best))
+    if (!length(i)) next
+    i <- i[order(-cand$score_best[i], -(cand$chip_exp_best[i] %||% 0))]
+    n_hit <- sum(cand$score_best[i] >= hit_score)
+    k <- min(max(n_hit + extra, show_range[1]), show_range[2], length(i))
+    cand$reported[utils::head(i, k)] <- TRUE
+  }
+  attr(cand, "report") <- list(hit_score = hit_score, extra = extra, show_range = show_range)
+  cand
+}
+
+## How the scored TFs were chosen, for plot subtitles
+.disc_rule_text <- function(rule, gene) {
+  ch <- if (identical(rule$n_chip, "auto"))
+    sprintf("the %d ChIP-bound TFs with the largest share of their ChIP-Atlas experiments bound near %s (+/- %d kb)",
+            as.integer(rule$n_chip_pool %||% 8), gene, as.integer(rule$screen_kb))
+  else sprintf("the %s TFs with most ChIP-Atlas experiments bound near %s (+/- %d kb)",
+               rule$n_chip, gene, as.integer(rule$screen_kb))
+  mo <- if (identical(rule$n_motif, "auto"))
+    sprintf("motif-only TFs with background p <= %g (%d-%d)", rule$motif_bg_p %||% 0.01,
+            as.integer(rule$n_motif_range[1]), as.integer(rule$n_motif_range[2]))
+  else sprintf("the %s best motif-only TFs", rule$n_motif)
+  paste(ch, "+", mo)
+}
+.pct_lab <- function(q) ifelse(is.na(q), "", ifelse(100 * q < 1, sprintf(", top %.1f%%", 100 * q),
+                                                     sprintf(", top %.0f%%", 100 * q)))
 
 ## Main discovery plot: the scored regulators of each promoter, ranked by their
 ## best proMotif score there. Open circle = the same site's motif-only score,
@@ -576,6 +657,7 @@ select_regulators <- function(disc, shortlist_bg_p = 0.2, shortlist_p = 1e-4,
 #' @export
 plot_discovery_regulators <- function(cand, disc, top_n = 10, base_size = 12, point_size = 3) {
   d <- cand[cand$selected & !is.na(cand$score_best), , drop = FALSE]
+  if (!is.null(d$reported)) { d <- d[d$reported, , drop = FALSE]; top_n <- Inf }
   if (!nrow(d)) return(NULL)
   m <- disc$meta; rule <- attr(cand, "rule")
   d <- do.call(rbind, lapply(split(d, d$promoter_id), function(x)
@@ -588,20 +670,34 @@ plot_discovery_regulators <- function(cand, disc, top_n = 10, base_size = 12, po
   d$motif0 <- ifelse(is.na(d$score_motif_only), d$score_best, pmin(d$score_motif_only, d$score_best))
   d$evid <- ifelse(!is.na(d$chip_exp_best) & d$chip_exp_best > 0, "ChIP-Atlas peak at the site",
                    "motif evidence only")
-  d$lab <- sprintf("%s | %s | bg p %s%s",
+  regs <- identical(rule$mode, "regulators")
+  nb <- d$screen_n_bound %||% rep(NA_real_, nrow(d)); ne <- d$screen_n_exp %||% rep(NA_real_, nrow(d))
+  d$lab <- sprintf("%s%s | bg p %s%s",
                    ifelse(d$chip_exp_best %in% NA | d$chip_exp_best == 0, "no peak at site",
                           sprintf("site: %d exp", as.integer(d$chip_exp_best))),
-                   ifelse(is.na(d$screen_n_bound), "near gene: no ChIP data",
-                          sprintf("near gene: %d/%d exp", as.integer(d$screen_n_bound),
-                                  as.integer(d$screen_n_exp))),
+                   if (regs) ifelse(is.na(nb), " | near gene: no ChIP data",
+                                    sprintf(" | near gene: %d/%d exp%s", as.integer(nb), as.integer(ne),
+                                            .pct_lab(d$screen_target_q %||% rep(NA_real_, nrow(d)))))
+                   else rep("", nrow(d)),
                    formatC(d$bg_pvalue, format = "g", digits = 2),
-                   ifelse(d$binding_check %in% "binding favours other promoter", " | other promoter", ""))
-  sub <- sprintf(paste0("per promoter: TFs with a motif match (background p <= %g, site p <= %g);\n",
-                        "scored: the %d with most ChIP-Atlas experiments bound near %s (+/- %d kb) and the %d best motif-only TFs\n",
-                        "open circle = motif-only score, filled = proMotif score (motif + ChIP-Atlas) of the TF's best site at that promoter;\n",
-                        "label: ChIP-Atlas experiments with a peak over that site | bound near the gene / all experiments of the TF | motif background p"),
-                 rule$shortlist_bg_p, rule$shortlist_p, rule$n_chip, m$gene,
-                 as.integer(rule$screen_kb), rule$n_motif)
+                   paste0(ifelse(d$binding_check %in% "binding favours other promoter", " | other promoter", ""),
+                          ifelse((d$route %||% rep(NA, nrow(d))) %in% "targeted scan", " | from scan", "")))
+  sub <- if (regs)
+    sprintf(paste0("per promoter: TFs with a motif match (background p <= %g, site p <= %g);\n",
+                   "scored: %s\n%s",
+                   "open circle = motif-only score, filled = proMotif score (motif + ChIP-Atlas) of the TF's best site at that promoter;\n",
+                   "label: ChIP-Atlas experiments with a peak over that site | bound near the gene / all experiments of the TF (rank among its targets) | motif background p"),
+            rule$shortlist_bg_p, rule$shortlist_p, .disc_rule_text(rule, m$gene),
+            { rp <- attr(cand, "report")
+              if (is.null(rp)) "" else sprintf("shown: the TFs with proMotif score >= %.1f plus %d more (%d-%d per promoter)\n",
+                                               rp$hit_score, as.integer(rp$extra), as.integer(rp$show_range[1]), as.integer(rp$show_range[2])) })
+  else
+    sprintf(paste0("per promoter: TFs with background p <= %g%s; the top %d scored\n",
+                   "open circle = motif-only score, filled = proMotif score (motif + ChIP-Atlas) of the TF's best site at that promoter;\n",
+                   "label: ChIP-Atlas experiments with a peak over that site | motif background p"),
+            rule$max_bg_p,
+            if (isTRUE(rule$multi)) sprintf(" and >= %gx better than at every other promoter", 10^rule$min_pref) else "",
+            rule$n_per_promoter)
   base_theme <- theme_bw(base_size = .tsz(base_size)) +
     theme(panel.grid.minor = element_blank(), panel.grid.major.y = element_blank(),
           plot.title = element_text(size = rel(0.95)),
@@ -617,7 +713,7 @@ plot_discovery_regulators <- function(cand, disc, top_n = 10, base_size = 12, po
     scale_color_manual(values = c(`ChIP-Atlas peak at the site` = "#C8553D",
                                   `motif evidence only` = "grey50"), name = NULL) +
     scale_y_discrete(labels = function(x) sub("___.*$", "", x)) +
-    scale_x_continuous(breaks = seq(0, 1, 0.25), limits = c(0, 2),
+    scale_x_continuous(breaks = seq(0, 1, 0.25), limits = c(0, 2.5),
                        expand = expansion(mult = c(0.01, 0))) +
     facet_wrap(~ panel, nrow = 1, scales = "free_y") +
     labs(x = "proMotif score (best site at this promoter)", y = NULL,
@@ -718,9 +814,15 @@ select_candidates <- function(disc, n_per_promoter = 3, max_bg_p = 0.01, min_pre
 #' @param cand Result of \code{\link{select_regulators}} or
 #'   \code{\link{select_candidates}}.
 #' @param expanded Named list of scans (\code{\link{expand_regulators}}).
+#' @param promote_score A scored TF whose targeted scan finds a ChIP-supported
+#'   site (ChIP-Atlas peaks over it) with at least this proMotif score at a
+#'   promoter where its motif alone did not shortlist it is reported there too
+#'   (\code{route = "targeted scan"}; default 0.5, \code{NULL} = off). This
+#'   keeps ChIP-supported sites with a weak motif, such as TP63 at the TP73 P2
+#'   promoter.
 #' @return \code{cand} with the score columns added.
 #' @export
-summarise_candidates <- function(cand, expanded) {
+summarise_candidates <- function(cand, expanded, promote_score = 0.5) {
   if (is.null(cand) || !nrow(cand)) return(cand)
   new <- c("score_best", "score_motif_only", "n_significant", "chip_exp_best",
            "best_locus", "best_locus_motif", "best_locus_pos", "score_other_best",
@@ -744,6 +846,18 @@ summarise_candidates <- function(cand, expanded) {
            id = st$site_id[b], mot = st$site_motif[b], pos = st$position_rel_tss[b])
     })
     names(per) <- pids
+    ## ChIP-supported binding found by the targeted scan at a promoter where
+    ## the motif alone did not shortlist the TF (a weak motif with ChIP-Atlas
+    ## peaks over it): the TF is reported there too (route "targeted scan")
+    if (!is.null(promote_score)) for (p in pids) {
+      x <- per[[p]]
+      i <- which(cand$tf == tf & cand$promoter_id == p & !cand$selected)
+      if (!is.null(x) && length(i) && isTRUE(x$best >= promote_score) && isTRUE(x$chip > 0)) {
+        cand$selected[i] <- TRUE
+        if (!is.null(cand$route))  cand$route[i]  <- "targeted scan"
+        if (!is.null(cand$status)) cand$status[i] <- "scored"
+      }
+    }
     for (i in which(cand$tf == tf & cand$selected)) {
       p <- cand$promoter_id[i]; x <- per[[p]]
       oth <- per[setdiff(pids, p)]; oth <- oth[!vapply(oth, is.null, logical(1))]
@@ -765,6 +879,114 @@ summarise_candidates <- function(cand, expanded) {
     }
   }
   cand
+}
+
+## Promoter-specific regulators: the best proMotif score of each scored TF at
+## every promoter of the gene (targeted scans) and whether its binding is
+## specific to one promoter.
+#' Promoter-specific regulators among the scored discovery TFs
+#'
+#' For a gene with more than one promoter: the best proMotif score of every
+#' scored discovery TF at each promoter (from its targeted scan, motif +
+#' ChIP-Atlas), and whether its binding is specific to one promoter. A TF is
+#' specific when its best score is at least `min_score` and at least
+#' `min_delta` above its best score at any other promoter.
+#'
+#' @param cand Candidate table from [select_regulators()] or
+#'   [select_candidates()], after [summarise_candidates()].
+#' @param expanded Targeted scans from [expand_regulators()].
+#' @param min_score Best proMotif score needed (default 0.5).
+#' @param min_delta Lead over every other promoter (default 0.3).
+#' @return A data frame, one row per TF and promoter: `score` (best proMotif
+#'   score there, `NA` = no site), `motif_only`, `chip_n_exp`, `site`,
+#'   `position`, `best_promoter`, `delta` (best minus next promoter) and
+#'   `specific`; `NULL` for a single promoter.
+#' @export
+promoter_specific_tfs <- function(cand, expanded, min_score = 0.5, min_delta = 0.3) {
+  if (is.null(cand) || !nrow(cand)) return(NULL)
+  pids <- unique(cand$promoter_id); pids <- pids[order(as.integer(sub("^P", "", pids)))]
+  keep <- if (!is.null(cand$reported)) cand$reported %in% TRUE else cand$selected
+  tfs <- intersect(names(expanded), unique(cand$tf[keep]))
+  if (length(pids) < 2 || !length(tfs)) return(NULL)
+  out <- do.call(rbind, lapply(tfs, function(tf) {
+    s <- expanded[[tf]]
+    st <- if (!is.null(s)) .compat_scores(s)$sites else NULL
+    if (is.null(st) || !nrow(st)) return(NULL)
+    inw <- strsplit(as.character(st$in_promoter_windows %||% st$promoter_id), ";", fixed = TRUE)
+    do.call(rbind, lapply(pids, function(p) {
+      k <- which(vapply(inw, function(v) p %in% trimws(v), logical(1)))
+      if (!length(k))
+        return(data.frame(tf = tf, promoter_id = p, score = NA_real_, motif_only = NA_real_,
+                          chip_n_exp = NA_real_, site = NA_character_, position = NA_real_))
+      b <- k[which.max(st$promotif_score[k])]
+      data.frame(tf = tf, promoter_id = p, score = st$promotif_score[b],
+                 motif_only = if (!is.null(st$motif_only_score)) st$motif_only_score[b] else NA_real_,
+                 chip_n_exp = if (!is.null(st$chip_n_exp)) as.numeric(st$chip_n_exp[b]) else NA_real_,
+                 site = st$site_id[b], position = st$position_rel_tss[b])
+    }))
+  }))
+  if (is.null(out) || !nrow(out)) return(NULL)
+  sc0 <- ifelse(is.na(out$score), 0, out$score)
+  idx <- split(seq_len(nrow(out)), out$tf)
+  best   <- vapply(idx, function(i) max(sc0[i]), numeric(1))
+  second <- vapply(idx, function(i) if (length(i) > 1) sort(sc0[i], decreasing = TRUE)[2] else 0, numeric(1))
+  bestp  <- vapply(idx, function(i) out$promoter_id[i][which.max(sc0[i])], character(1))
+  out$best_promoter <- bestp[out$tf]
+  out$delta <- (best - second)[out$tf]
+  out$specific <- (best >= min_score & (best - second) >= min_delta)[out$tf]
+  rownames(out) <- NULL
+  attr(out, "rule") <- list(min_score = min_score, min_delta = min_delta)
+  out
+}
+
+#' Plot the promoter-specific regulators of a discovery run
+#'
+#' Heat map of the best proMotif score of every scored TF (rows) at each
+#' promoter of the gene (columns). TFs whose binding is specific to one
+#' promoter come first, grouped by that promoter; a black frame marks the
+#' promoter they are specific to.
+#'
+#' @param spec Output of [promoter_specific_tfs()].
+#' @param disc Discovery result ([discover_regulators()] or
+#'   [run_regulator_discovery()]).
+#' @param base_size Base font size (default 12).
+#' @return A ggplot, or `NULL` when there is nothing to plot.
+#' @export
+plot_discovery_promoter_specific <- function(spec, disc, base_size = 12) {
+  if (is.null(spec) || !nrow(spec)) return(NULL)
+  m <- disc$meta; r <- attr(spec, "rule") %||% list(min_score = 0.5, min_delta = 0.3)
+  pids <- unique(spec$promoter_id); pids <- pids[order(as.integer(sub("^P", "", pids)))]
+  tfo <- unique(spec[, c("tf", "best_promoter", "delta", "specific")])
+  tfo <- tfo[order(!tfo$specific, match(tfo$best_promoter, pids), -tfo$delta), , drop = FALSE]
+  ylab <- stats::setNames(ifelse(tfo$specific, sprintf("%s  [%s-specific, +%.2f]", tfo$tf, tfo$best_promoter, tfo$delta),
+                                 sprintf("%s  [best %s, +%.2f]", tfo$tf, tfo$best_promoter, tfo$delta)), tfo$tf)
+  spec$tf_f <- factor(spec$tf, levels = rev(tfo$tf))
+  pr <- disc$promoters
+  xl <- stats::setNames(vapply(pids, function(p) {
+    i <- if (is.null(pr)) NA else match(p, pr$promoter_id)
+    if (!is.na(i) && isTRUE(pr$has_canonical[i])) paste0(p, "\n(canonical)") else p }, ""), pids)
+  spec$promoter_f <- factor(spec$promoter_id, levels = pids)
+  spec$lab <- ifelse(is.na(spec$score), "-",
+                     sprintf("%.2f%s", spec$score,
+                             ifelse(!is.na(spec$chip_n_exp) & spec$chip_n_exp > 0,
+                                    sprintf("\n%d exp", as.integer(spec$chip_n_exp)), "")))
+  box <- spec[spec$specific & spec$promoter_id == spec$best_promoter, , drop = FALSE]
+  ggplot(spec, aes(promoter_f, tf_f)) +
+    geom_tile(aes(fill = score), color = "white", linewidth = 0.8) +
+    geom_tile(data = box, fill = NA, color = "black", linewidth = 0.9) +
+    geom_text(aes(label = lab), size = .tsz(base_size) / 4.4, lineheight = 0.85) +
+    scale_fill_gradient(low = "#F4F4F4", high = "#C8553D", limits = c(0, 1), na.value = "white",
+                        name = "proMotif score\n(best site)") +
+    scale_x_discrete(labels = xl, position = "top") +
+    scale_y_discrete(labels = function(x) ylab[x]) +
+    labs(x = NULL, y = NULL, title = sprintf("Promoter-specific regulators of %s", m$gene),
+         subtitle = sprintf(paste0("best proMotif score of each scored TF at each promoter (targeted scan: motif + ChIP-Atlas)\n",
+                                   "framed = specific: score >= %.1f and >= %.1f above every other promoter\n",
+                                   "label: score and ChIP-Atlas experiments with a peak at that site | - = no site"),
+                            r$min_score, r$min_delta)) +
+    theme_bw(base_size = .tsz(base_size)) +
+    theme(panel.grid = element_blank(), plot.title = element_text(size = rel(0.95)),
+          plot.subtitle = element_text(size = rel(0.7)), legend.position = "right")
 }
 
 ## Panel label of a promoter in discovery plots: "P1 (canonical) | 1 TSS, 6 tx | 1:3,652,516"
@@ -840,10 +1062,10 @@ plot_discovery_candidates <- function(cand, disc, top_n = 15, base_size = 12, po
   plab <- if (rule$use_bg) "-log10 promoter-background p (best site at this promoter)" else
                            "-log10 FIMO per-site p (best site)"
   sub <- if (regs) sprintf(paste0("shortlist = background p <= %g and site p <= %g | ChIP-bound = >= %d ChIP-Atlas experiments with a peak near %s | ",
-                                  "scored = top %d ChIP-bound + %d motif-only per promoter\n",
+                                  "scored = %s\n",
                                   "label = best proMotif score at this promoter and ChIP-Atlas experiments with a peak there | (+N) = more TFs share that site | %d motifs, %s background promoters"),
                            rule$shortlist_bg_p, rule$shortlist_p, rule$min_bound, m$gene,
-                           rule$n_chip, rule$n_motif, m$n_tested %||% NA,
+                           .disc_rule_text(rule, m$gene), m$n_tested %||% NA,
                            format(m$bg_n %||% 20094, big.mark = ",")) else
          sprintf(paste0("candidate = background p <= %g at this promoter%s | top %d per promoter scored with the proMotif score (motif + ChIP-Atlas)\n",
                         "label = best proMotif score at this promoter and ChIP-Atlas experiments with a peak there | (+N) = more TFs share that site | %d motifs, %s background promoters"),
@@ -891,7 +1113,8 @@ plot_discovery_candidates <- function(cand, disc, top_n = 15, base_size = 12, po
 ##   <GENE>_discovery_candidates.csv  one row per TF per promoter: motif, screen,
 ##                                    status, and for scored TFs the proMotif score
 ##   <GENE>_candidate_regulators.csv  every motif x promoter (best site, p-values)
-##   top_TFs/<TF>/                    top-sites plot (proMotif score) and table
+##   top_TFs/<TF>/                    top-sites plot (proMotif score), promoter map
+##                                    (-log10 motif p) and table
 #' Discover the regulators of a gene, score them, plot, and write files
 #'
 #' Runs \code{\link{discover_regulators}}, selects TFs per promoter
@@ -900,8 +1123,15 @@ plot_discovery_candidates <- function(cand, disc, top_n = 15, base_size = 12, po
 #' the targeted scan and ChIP-Atlas (\code{\link{expand_regulators}},
 #' \code{\link{summarise_candidates}}), and writes to
 #' \code{<out_root>/<GENE>_regulators/}: \code{_discovery_regulators.pdf},
+#' \code{_discovery_promoter_specific.pdf/.csv} (several promoters),
 #' \code{_discovery_candidates.pdf/.csv}, \code{_candidate_regulators.csv} and
-#' \code{top_TFs/<TF>/} (top-sites plot and table per scored TF).
+#' \code{top_TFs/<TF>/} (top-sites plot, -log10 p promoter map and table per
+#' shown TF).
+#'
+#' How many TFs are shown per promoter is decided by the scores: the TFs whose
+#' best site there has a high proMotif score (>= 0.8; hits), plus two more, at
+#' least 5 and at most 10 (column \code{reported}). A promoter with 2-3 hits
+#' shows 5 TFs; one with 7 hits shows 9.
 #'
 #' @inheritParams discover_regulators
 #' @param top_n Rows per promoter in the candidate plot (15).
@@ -937,7 +1167,7 @@ run_regulator_discovery <- function(gene, species = "homo_sapiens",
                                     base_size = 12, point_size = 3,
                                     chip = FALSE, chip_cell_pattern = NULL, chip_max_mb = 300,
                                     rule = c("regulators", "specific"),
-                                    n_chip = 5, n_motif = 2, shortlist_bg_p = 0.2,
+                                    n_chip = "auto", n_motif = "auto", shortlist_bg_p = 0.2,
                                     shortlist_p = 1e-4, min_bound = 2, screen_kb = 5,
                                     n_per_promoter = 3, max_bg_p = 0.01, min_pref = 1,
                                     expand_threshold = 0.75, expand_tfs = NULL,
@@ -951,7 +1181,7 @@ run_regulator_discovery <- function(gene, species = "homo_sapiens",
   cand <- if (rule == "regulators")
     select_regulators(disc, shortlist_bg_p = shortlist_bg_p, shortlist_p = shortlist_p,
                       n_chip = if (isTRUE(chip)) n_chip else 0,
-                      n_motif = if (isTRUE(chip)) n_motif else n_chip + n_motif,
+                      n_motif = if (!isTRUE(chip) && is.numeric(n_chip) && is.numeric(n_motif)) n_chip + n_motif else n_motif,
                       min_bound = min_bound, screen = isTRUE(chip), screen_kb = screen_kb,
                       chip_cell_pattern = chip_cell_pattern, screen_max_mb = chip_max_mb,
                       extra_tfs = expand_tfs)
@@ -968,7 +1198,22 @@ run_regulator_discovery <- function(gene, species = "homo_sapiens",
                       chip_cell_pattern = chip_cell_pattern, chip_max_mb = chip_max_mb)
     else list()
   cand  <- summarise_candidates(cand, expanded)
-  plots <- list(regulators = plot_discovery_regulators(cand, disc, base_size = base_size,
+  cand  <- .report_candidates(cand)            # how many to show: decided by the scores
+  for (p in unique(cand$promoter_id)) {
+    i <- which(cand$promoter_id == p & cand$reported)
+    if (length(i)) message(sprintf("  %s: %d scored, %d with proMotif score >= %.1f, %d shown: %s", p,
+                                   sum(cand$promoter_id == p & cand$selected),
+                                   sum(cand$score_best[i] >= attr(cand, "report")$hit_score, na.rm = TRUE),
+                                   attr(cand, "report")$hit_score, length(i),
+                                   paste(cand$tf[i], collapse = ", ")))
+  }
+  spec  <- promoter_specific_tfs(cand, expanded)
+  if (!is.null(spec) && any(spec$specific)) {
+    sp <- unique(spec[spec$specific, c("tf", "best_promoter", "delta")])
+    message("  promoter-specific: ", paste(sprintf("%s (%s, +%.2f)", sp$tf, sp$best_promoter, sp$delta), collapse = ", "))
+  }
+  plots <- list(specific = plot_discovery_promoter_specific(spec, disc, base_size = base_size),
+                regulators = plot_discovery_regulators(cand, disc, base_size = base_size,
                                                        point_size = point_size),
                 candidates = plot_discovery_candidates(cand, disc, top_n = top_n,
                                                        base_size = base_size,
@@ -998,10 +1243,17 @@ run_regulator_discovery <- function(gene, species = "homo_sapiens",
                    width = if (npan > 1) min(7.5 * npan, 30) else 12,
                    height = max(5, 0.3 * nrow_max + 3))
     }
+    if (!is.null(spec)) {
+      write.csv(spec, file.path(out_dir, sprintf("%s_discovery_promoter_specific.csv", gene)), row.names = FALSE)
+      .ggsave_safe(file.path(out_dir, sprintf("%s_discovery_promoter_specific.pdf", gene)), plots$specific,
+                   width = max(7, 4.5 + 1.6 * length(unique(spec$promoter_id))),
+                   height = max(4, 0.42 * length(unique(spec$tf)) + 2.6))
+    }
     ## the scored candidates: top-sites plot (proMotif score) and table each
     if (is.null(color_seed)) color_seed <- sample.int(1e6, 1)
     unlink(file.path(out_dir, "top_TFs"), recursive = TRUE)
-    for (tf in names(expanded)) {
+    shown <- unique(c(cand$tf[cand$reported %in% TRUE], expand_tfs))
+    for (tf in intersect(names(expanded), shown)) {
       s <- expanded[[tf]]
       if (is.null(s) || !nrow(s$result)) {
         message("  top_TFs: ", tf, " skipped (no sites at threshold ", expand_threshold, ").")
@@ -1015,11 +1267,17 @@ run_regulator_discovery <- function(gene, species = "homo_sapiens",
       tp <- plot_top_sites(s, top_n = label_top, base_size = base_size, color_seed = color_seed)
       if (!is.null(tp))
         .ggsave_safe(paste0(stem, "_top_sites.pdf"), tp, width = 12, height = if (with_chip) 8 else 6.5)
+      ## motif-only view (-log10 per-site p), as in gene + TF mode: next to the
+      ## top-sites plot it shows how the ChIP-Atlas evidence re-ranks the sites
+      pm <- plot_promoter_map(s, base_size = base_size, point_size = point_size, color_seed = color_seed)
+      if (!is.null(pm))
+        .ggsave_safe(paste0(stem, sprintf("_promoter_map%s.pdf", if (with_chip) "_chip" else "")), pm,
+                     width = 11, height = if (with_chip) 7.5 else 6)
     }
     message("Wrote plots to: ", out_dir,
             if (length(expanded)) sprintf(" (+ top_TFs/ for %d TF(s))", length(expanded)) else "")
   }
   message("Done (discovery).")
-  invisible(list(result = disc$result, candidates = cand, top = disc$top, plots = plots,
+  invisible(list(result = disc$result, candidates = cand, specific = spec, top = disc$top, plots = plots,
                  meta = disc$meta, promoters = disc$promoters, expanded = expanded))
 }

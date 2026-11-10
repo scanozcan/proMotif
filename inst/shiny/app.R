@@ -1,6 +1,9 @@
 ## proMotif Shiny app (launched via proMotif::launch_app()).
-## Modes: gene + TF, discover regulators, compare promoters. The analysis runs
-## once per "Run"; size, colours and the ChIP ring threshold re-style instantly.
+## Modes: gene + TF, discover regulators, compare promoters. Promoters from
+## EPDnew (default) or Ensembl. Discovery selects the likely regulators of each
+## promoter and scores them with the proMotif score (run_regulator_discovery).
+## The analysis runs once per "Run"; size, colours and the ChIP ring threshold
+## re-style instantly.
 library(shiny)
 library(proMotif)
 `%||%` <- function(a, b) if (is.null(a) || length(a) == 0) b else a
@@ -34,8 +37,10 @@ ui <- fluidPage(
       fluidRow(
         column(6, numericInput("upstream",   "Upstream (bp)",   2500, min = 0, step = 100)),
         column(6, numericInput("downstream", "Downstream (bp)",  500, min = 0, step = 100))),
+      selectInput("tss_source", "Promoters (TSSs) from",
+                  c("EPDnew (curated promoters)" = "epd", "Ensembl transcripts" = "ensembl")),
       selectInput("transcripts", "Transcripts", c("protein_coding", "all")),
-      conditionalPanel("input.mode != 'compare'",
+      conditionalPanel("input.mode == 'confirm'",
         sliderInput("threshold", "PWM threshold (fraction of max)",
                     min = 0.60, max = 0.95, value = 0.80, step = 0.01)),
       conditionalPanel("input.mode == 'confirm'",
@@ -43,14 +48,27 @@ ui <- fluidPage(
           column(6, numericInput("max_transcripts", "Max TSS windows", 8, min = 1, step = 1)),
           column(6, selectInput("scan_unit", "Scan per", c("tss", "promoter"))))),
       conditionalPanel("input.mode != 'confirm'",
-        numericInput("top_n", "TFs to show", 20, min = 5, step = 5)),
+        numericInput("top_n", "Motifs to show per promoter", 15, min = 5, step = 5)),
       conditionalPanel("input.mode == 'discover'",
-        selectInput("rank_by", "Rank TFs by",
-                    c("promoter background" = "background", "FIMO per-site p" = "fimo")),
-        numericInput("expand_n", "Targeted scans of top TFs (0 = off)", 3, min = 0, step = 1),
-        selectInput("expand_by", "Pick them by",
-                    c("ChIP support first (if ChIP on)" = "auto", "motif rank" = "rank")),
-        textInput("expand_tfs", "...or these TFs (comma-separated)", "")),
+        selectInput("rule", "Select TFs",
+                    c("Likely regulators (motif + ChIP-Atlas)" = "regulators",
+                      "Promoter-specific motifs" = "specific")),
+        conditionalPanel("input.rule == 'regulators'",
+          checkboxInput("auto_n", "Number of TFs: automatic (decided by the scores)", TRUE),
+          conditionalPanel("!input.auto_n",
+            fluidRow(
+              column(6, numericInput("n_chip", "ChIP-bound TFs / promoter", 5, min = 0, step = 1)),
+              column(6, numericInput("n_motif", "Motif-only TFs / promoter", 2, min = 0, step = 1))))),
+        conditionalPanel("input.rule == 'specific'",
+          numericInput("n_per_promoter", "TFs per promoter", 3, min = 1, step = 1)),
+        textInput("expand_tfs", "Also score these TFs (comma-separated)", ""),
+        numericInput("expand_threshold", "PWM threshold of the TF scans", 0.75,
+                     min = 0.60, max = 0.95, step = 0.01),
+        helpText("Likely regulators: TFs whose motif is at least as good here as at most",
+                 "promoters; with ChIP-Atlas on, the TFs with the largest share of their",
+                 "experiments bound near the gene are scored too. Each scored TF gets the",
+                 "proMotif score; automatic shows the TFs with score >= 0.8 plus 2 more",
+                 "(5-10 per promoter).")),
       tags$details(tags$summary("Motif databases"),
         fluidRow(
           column(6, selectInput("jaspar_release", "JASPAR", c("2026", "2024", "2022"))),
@@ -61,12 +79,13 @@ ui <- fluidPage(
         checkboxInput("chip", "Add ChIP-Atlas evidence (human)", FALSE),
         conditionalPanel("input.chip",
           textInput("chip_cell", "Cell types (regex, optional)", "", placeholder = "HepG2|liver"),
-          fluidRow(
-            column(6, numericInput("chip_max_mb", "ChIP data budget (MB)", 300, min = 10, step = 50)),
-            column(6, conditionalPanel("input.mode == 'discover'",
-              selectInput("chip_distance", "TSS +/- kb", c(1, 5, 10))))),
-          helpText("If a TF's merged ChIP-Atlas file is larger than the budget, the newest",
-                   "experiments are used until the budget is reached (files are cached)."))),
+          numericInput("chip_max_mb", "ChIP data budget per TF (MB)", 300, min = 10, step = 50),
+          helpText("If a TF's ChIP-Atlas data are larger than the budget, the newest",
+                   "experiments are used until the budget is reached (files are cached).",
+                   "In discovery, the first genes download the screen files of many TFs."))),
+      checkboxInput("track", "Gene track (promoters and transcripts)", TRUE),
+      conditionalPanel("input.track",
+        checkboxInput("track_cage", "...with FANTOM5 CAGE, normal vs cancer (needs the FANTOM5 folder)", FALSE)),
       actionButton("run", "Run", class = "btn-primary", width = "100%"),
       tags$hr(),
       tags$b("Display (applies instantly, no re-run)"),
@@ -77,8 +96,8 @@ ui <- fluidPage(
       actionButton("recolour", "Shuffle colours", width = "100%"),
       numericInput("color_seed", "Colour seed (blank = random per run)", value = NA),
       helpText("Gene + TF takes seconds; discovery and promoter comparison scan",
-               "~1,000 JASPAR motifs and take a minute or more. The first run",
-               "downloads JASPAR / HOCOMOCO (and ChIP-Atlas files) once.")
+               "~1,000 JASPAR motifs and take a few minutes (more with ChIP-Atlas).",
+               "The first run downloads JASPAR / HOCOMOCO (and ChIP-Atlas files) once.")
     ),
     mainPanel(
       width = 9,
@@ -99,7 +118,7 @@ server <- function(input, output, session) {
     log_rv(character(0))
     cell <- if (nzchar(trimws(input$chip_cell))) trimws(input$chip_cell) else NULL
     msg <- switch(mode, confirm = sprintf("Scanning %s / %s ...", g, trimws(input$tf)),
-                  discover = sprintf("Ranking candidate regulators of %s ...", g),
+                  discover = sprintf("Finding the likely regulators of %s ...", g),
                   compare  = sprintf("Comparing the promoters of %s ...", g))
     withProgress(message = msg, value = 0.4, {
       res <- tryCatch(.with_log({
@@ -109,34 +128,39 @@ server <- function(input, output, session) {
                  threshold_frac = input$threshold, transcripts = input$transcripts,
                  max_transcripts = input$max_transcripts, scan_unit = input$scan_unit,
                  hocomoco_version = input$hocomoco_version,
-                 jaspar_release = input$jaspar_release)
+                 jaspar_release = input$jaspar_release, tss_source = input$tss_source)
           if (isTRUE(input$chip) && nrow(s$result))
             s <- add_chip_peaks(s, cell_pattern = cell, max_mb = input$chip_max_mb)
           if (isTRUE(input$usage)) s <- add_promoter_usage(s)
           list(mode = mode, obj = s)
         } else if (mode == "discover") {
-          d <- discover_regulators(g, upstream = input$upstream,
-                 downstream = input$downstream, top_n = input$top_n,
-                 transcripts = input$transcripts,
-                 jaspar_release = input$jaspar_release, rank_by = input$rank_by)
-          if (isTRUE(input$chip))
-            d <- add_chip_targets(d, distance = as.numeric(input$chip_distance),
-                                  cell_pattern = cell, max_mb = input$chip_max_mb)
           etf <- trimws(strsplit(input$expand_tfs, ",")[[1]]); etf <- etf[nzchar(etf)]
-          ex <- if (isTRUE(input$expand_n > 0) || length(etf))
-            expand_regulators(d, tfs = if (length(etf)) etf else NULL, n = input$expand_n,
-                              by = input$expand_by, chip = isTRUE(input$chip),
-                              threshold_frac = input$threshold,
-                              hocomoco_version = input$hocomoco_version,
-                              chip_cell_pattern = cell, chip_max_mb = input$chip_max_mb)
-            else list()
-          list(mode = mode, obj = d, expanded = ex)
+          d <- run_regulator_discovery(g, upstream = input$upstream,
+                 downstream = input$downstream, top_n = input$top_n, write_files = FALSE,
+                 chip = isTRUE(input$chip), chip_cell_pattern = cell,
+                 chip_max_mb = input$chip_max_mb, rule = input$rule,
+                 n_chip = if (isTRUE(input$auto_n)) "auto" else input$n_chip,
+                 n_motif = if (isTRUE(input$auto_n)) "auto" else input$n_motif,
+                 n_per_promoter = input$n_per_promoter,
+                 expand_threshold = input$expand_threshold,
+                 expand_tfs = if (length(etf)) etf else NULL,
+                 transcripts = input$transcripts, jaspar_release = input$jaspar_release,
+                 tss_source = input$tss_source)
+          list(mode = mode, obj = d, expanded = d$expanded, chip = isTRUE(input$chip))
         } else {
           list(mode = mode, obj = compare_promoter_regulators(g,
                  upstream = input$upstream, downstream = input$downstream,
-                 transcripts = input$transcripts, jaspar_release = input$jaspar_release))
+                 transcripts = input$transcripts, jaspar_release = input$jaspar_release,
+                 tss_source = input$tss_source))
         }
       }, log_rv), error = function(e) list(mode = mode, error = conditionMessage(e)))
+      ## gene track (promoters, transcripts, optional CAGE); a failure here
+      ## never stops the main result
+      if (is.null(res$error) && isTRUE(input$track))
+        res$track <- tryCatch(.with_log(plot_promoter_track(g, tss_source = input$tss_source,
+                                          transcripts = "all", cage = isTRUE(input$track_cage)),
+                                        log_rv),
+                              error = function(e) { log_rv(c(log_rv(), paste("Gene track:", conditionMessage(e)))); NULL })
     })
     res
   }, ignoreNULL = TRUE)
@@ -145,7 +169,7 @@ server <- function(input, output, session) {
     r <- run_rv()
     if (!is.null(r$error)) return(FALSE)
     switch(r$mode, confirm = nrow(r$obj$result) > 0,
-           discover = !is.null(r$obj$top) && nrow(r$obj$top) > 0,
+           discover = !is.null(r$obj$candidates) && nrow(r$obj$candidates) > 0,
            compare = !is.null(r$obj$comparison))
   })
 
@@ -168,9 +192,12 @@ server <- function(input, output, session) {
                   list(promoter_map = plot_promoter_map(r$obj, base_size = bs,
                          point_size = bs / 4, color_seed = seed_rv(),
                          chip_ring_p = as.numeric(input$ring_p)))),
-      discover = c(plot_regulators(r$obj, base_size = bs, point_size = bs / 4),
-                   list(chip = plot_regulators_chip(r$obj, base_size = bs,
-                                                    point_size = bs / 4))),
+      discover = list(
+        regulators = plot_discovery_regulators(r$obj$candidates, r$obj, base_size = bs,
+                                               point_size = bs / 4),
+        candidates = plot_discovery_candidates(r$obj$candidates, r$obj, top_n = input$top_n,
+                                               base_size = bs, point_size = bs / 4),
+        specific = plot_discovery_promoter_specific(r$obj$specific, r$obj, base_size = bs)),
       compare = list(cmp = plot_promoter_regulators(r$obj, top_n = input$top_n,
                                                     base_size = bs)))
   })
@@ -189,11 +216,16 @@ server <- function(input, output, session) {
                    m$hocomoco_version %||% "?",
                    if (!is.null(r$obj$chip)) sprintf(" | ChIP-Atlas: %d experiment(s) in region",
                                                     r$obj$chip$n_experiments) else ""),
-      discover = sprintf("%s: %d promoter(s) scanned (%s), %d motifs, top %d TFs per promoter, ranked by %s.",
-                         m$gene, m$n_promoters %||% 1L,
-                         paste(m$promoters_scanned %||% "P1", collapse = ", "),
-                         m$n_tested, m$top_n,
-                         if (identical(m$rank_by, "background")) "promoter background" else "FIMO p"),
+      discover = {
+        cd <- r$obj$candidates; sel <- cd[cd$selected, , drop = FALSE]
+        sprintf("%s: %d promoter(s) (%s, %s), %s motifs scanned; %d TF(s) scored with the proMotif score, %d shown (%s)%s.",
+                m$gene, length(unique(cd$promoter_id)), paste(sort(unique(cd$promoter_id)), collapse = ", "),
+                if (identical(m$tss_source, "epd")) "EPDnew" else "Ensembl",
+                format(m$n_tested %||% NA), length(unique(sel$tf)),
+                length(unique(cd$tf[cd$reported %in% TRUE])),
+                if (identical(attr(cd, "rule")$mode, "regulators")) "likely-regulator rule" else "promoter-specific rule",
+                if (isTRUE(r$chip)) " | ChIP-Atlas screen and peaks" else " | motif only (tick ChIP-Atlas for the screen)")
+      },
       compare = if (is.null(r$obj$comparison))
         sprintf("%s has a single promoter at this window - nothing to compare (try Transcripts = all).", m$gene)
       else sprintf("%s: %d promoters compared; %d TFs with a call.", m$gene, m$n_regions,
@@ -207,6 +239,14 @@ server <- function(input, output, session) {
     if (!isTRUE(ok())) return(tabsetPanel(log_tab))
     nf <- if (mode == "confirm") r$obj$meta$n_facets else 1
     h  <- paste0(max(600, 240 * nf), "px")
+    track_tab <- tabPanel("Gene track", plotOutput("p_track", height = "650px"))
+    if (mode == "discover") {
+      cd <- r$obj$candidates
+      nreg <- max(c(1, table(cd$promoter_id[if (!is.null(cd$reported)) cd$reported else cd$selected])))
+      h_reg  <- paste0(max(450, 42 * nreg + 220), "px")
+      h_cand <- paste0(max(500, 30 * (input$top_n + nreg) + 220), "px")
+      h_spec <- paste0(max(420, 38 * length(unique(r$obj$specific$tf)) + 220), "px")
+    }
     switch(mode,
       confirm = tabsetPanel(
         tabPanel("Top sites",
@@ -230,22 +270,37 @@ server <- function(input, output, session) {
         tabPanel("By transcript (sig)", plotOutput("p_by_transcript_sig", height = h)),
         tabPanel("Genomic (sig)",       plotOutput("p_genomic_sig", height = "640px")),
         tabPanel("Promoters", br(), tableOutput("tbl_prom")),
+        track_tab,
         tabPanel("Table", br(), downloadButton("dl_csv", "Download CSV"), br(), br(),
                  tableOutput("tbl")),
         log_tab),
       discover = tabsetPanel(
-        tabPanel("Ranking", plotOutput("p_ranking", height = "700px")),
-        tabPanel("Needle",  plotOutput("p_needle", height = "600px")),
-        tabPanel("Map",     plotOutput("p_map", height = "700px")),
-        tabPanel("Motif vs ChIP", plotOutput("p_chip", height = "650px")),
-        tabPanel("Top TF maps", br(), uiOutput("exp_sel"),
+        tabPanel("Regulators",
+                 helpText("Scored TFs of each promoter. Open circle = motif-only score, filled",
+                          "= proMotif score (motif + ChIP-Atlas); labels: experiments with a peak",
+                          "over the site, experiments bound near the gene, motif background p."),
+                 plotOutput("p_regulators", height = h_reg)),
+        tabPanel("Promoter-specific",
+                 helpText("Best proMotif score of each scored TF at every promoter (targeted scans).",
+                          "Framed = binding specific to that promoter (score >= 0.5 and >= 0.3 above",
+                          "every other promoter). Genes with one promoter have nothing to compare."),
+                 plotOutput("p_specific", height = h_spec)),
+        tabPanel("Candidates",
+                 helpText("Motif shortlist of each promoter (best motifs vs a 20,094-promoter",
+                          "background), coloured by what happened to each TF."),
+                 plotOutput("p_candidates", height = h_cand)),
+        tabPanel("Top sites per TF", br(), uiOutput("exp_sel"),
+                 fluidRow(column(4, numericInput("label_top_d", "Label the top N sites", 10, min = 0, step = 1))),
                  plotOutput("p_exp", height = "720px")),
-        tabPanel("Table", br(), downloadButton("dl_csv", "Download CSV"), br(), br(),
+        track_tab,
+        tabPanel("Table", br(), downloadButton("dl_csv", "Download candidates (CSV)"), " ",
+                 downloadButton("dl_motifs", "Download all motifs (CSV)"), br(), br(),
                  tableOutput("tbl")),
         log_tab),
       compare = tabsetPanel(
         tabPanel("Promoter-specific TFs", plotOutput("p_cmp", height = "750px")),
         tabPanel("Promoters", br(), tableOutput("tbl_prom")),
+        track_tab,
         tabPanel("Table", br(), downloadButton("dl_csv", "Download CSV"), br(), br(),
                  tableOutput("tbl")),
         log_tab))
@@ -341,20 +396,33 @@ server <- function(input, output, session) {
   output$p_canonical_sig     <- renderPlot(.need_plot(plots_rv()$canonical_sig, .sig_need))
   output$p_by_transcript_sig <- renderPlot(.need_plot(plots_rv()$by_transcript_sig, .sig_need))
   output$p_genomic_sig       <- renderPlot(.need_plot(plots_rv()$genomic_sig, .sig_need))
-  output$p_ranking <- renderPlot(.need_plot(plots_rv()$ranking))
-  output$p_needle  <- renderPlot(.need_plot(plots_rv()$needle))
-  output$p_map     <- renderPlot(.need_plot(plots_rv()$map))
-  output$p_chip    <- renderPlot(.need_plot(plots_rv()$chip,
-                        "Tick 'Add ChIP-Atlas evidence' and run again to see this plot."))
+  output$p_regulators <- renderPlot(.need_plot(plots_rv()$regulators,
+                           "No TF was scored for this gene (no motif passed the rule)."))
+  output$p_candidates <- renderPlot(.need_plot(plots_rv()$candidates))
+  output$p_specific <- renderPlot(.need_plot(plots_rv()$specific,
+                         "Only one promoter (or no scored TF): nothing to compare between promoters."))
+  output$p_track <- renderPlot({
+    r <- run_rv()
+    validate(need(!is.null(r$track),
+      "Tick 'Gene track' and run again (see the Log tab if it failed)."))
+    r$track
+  })
   output$p_cmp     <- renderPlot(.need_plot(plots_rv()$cmp,
                         "No TF passes the present/absent cut-offs for these promoters."))
   output$log <- renderText(paste(log_rv(), collapse = "\n"))
 
-  ## targeted scans of the top discovery TFs (promoter map, ChIP track, rings)
+  ## the scored discovery TFs: top-sites plot (proMotif score) of each,
+  ## listed by their best score (with the promoter where it is reached)
   output$exp_sel <- renderUI({
-    ex <- run_rv()$expanded
-    if (!length(ex)) return(helpText("Set 'Targeted scans of top TFs' above 0 and run again."))
-    selectInput("exp_tf", "TF", names(ex), width = "300px")
+    r <- run_rv(); ex <- r$expanded
+    if (!length(ex)) return(helpText("No TF was scored for this gene."))
+    cd <- r$obj$candidates; cd <- cd[cd$selected & cd$tf %in% names(ex) & !is.na(cd$score_best), , drop = FALSE]
+    cd <- cd[order(-cd$score_best), , drop = FALSE]; cd <- cd[!duplicated(cd$tf), , drop = FALSE]
+    tfs <- c(cd$tf, setdiff(names(ex), cd$tf))
+    lab <- ifelse(tfs %in% cd$tf,
+                  sprintf("%s  (%s, score %.2f)", tfs, cd$promoter_id[match(tfs, cd$tf)],
+                          cd$score_best[match(tfs, cd$tf)]), tfs)
+    selectInput("exp_tf", "TF", stats::setNames(tfs, lab), width = "360px")
   })
   output$p_exp <- renderPlot({
     ex <- run_rv()$expanded; req(length(ex), input$exp_tf)
@@ -362,13 +430,16 @@ server <- function(input, output, session) {
     validate(need(!is.null(s) && nrow(s$result) > 0,
                   "No sites for this TF at the chosen threshold."))
     bs <- input$base_size
-    plot_promoter_map(s, base_size = bs, point_size = bs / 4, color_seed = seed_rv(),
-                      chip_ring_p = as.numeric(input$ring_p))
+    plot_top_sites(s, top_n = input$label_top_d %||% 10, base_size = bs, point_size = bs / 4,
+                   color_seed = seed_rv(), chip_ring_p = as.numeric(input$ring_p))
   })
 
   table_rv <- reactive({
     req(ok()); r <- run_rv()
-    switch(r$mode, confirm = r$obj$result, discover = r$obj$result,
+    switch(r$mode, confirm = r$obj$result,
+           discover = { cd <- r$obj$candidates
+                        cd[order(!cd$selected, cd$promoter_id, -ifelse(is.na(cd$score_best), -1, cd$score_best),
+                                 cd$p_rank %||% seq_len(nrow(cd))), , drop = FALSE] },
            compare = r$obj$comparison)
   })
   output$tbl <- renderTable({
@@ -378,9 +449,9 @@ server <- function(input, output, session) {
                   "position", "strand", "score_frac", "pvalue", "qvalue",
                   "genomic_start", "genomic_end", "site_motif", "chip_n_exp", "chip_support",
                   "promotif_score", "confidence", "chip_cell_types"),
-      discover = c("promoter_id", "tf", "family", "matrix_id", "position", "strand", "score_frac",
-                   "pvalue", "bg_pvalue", "bg_qvalue", "n_at_site", "shares_site_with",
-                   "chip_n_exp", "chip_frac_exp"),
+      discover = c("promoter_id", "tf", "status", "reported", "route", "screen_n_bound", "screen_n_exp", "screen_target_q",
+                   "bg_pvalue", "pvalue", "position", "site", "pref", "score_best", "score_motif_only",
+                   "n_significant", "chip_exp_best", "best_locus", "binding_check"),
       compare = names(t))
     utils::head(t[, intersect(keep, names(t)), drop = FALSE], 500)
   }, digits = 4)
@@ -394,11 +465,17 @@ server <- function(input, output, session) {
     filename = function() {
       r <- run_rv(); m <- r$obj$meta
       sprintf("%s_%s.csv", m$gene, switch(r$mode, confirm = paste0(m$tf, "_binding_sites"),
-                                          discover = "candidate_regulators",
+                                          discover = "discovery_candidates",
                                           compare = "promoter_regulators"))
     },
-    content = function(file) utils::write.csv(table_rv(), file, row.names = FALSE)
+    content = function(file) {
+      t <- table_rv(); t$p_rank <- NULL; t$lp <- NULL; t$eligible <- NULL
+      utils::write.csv(t, file, row.names = FALSE)
+    }
   )
+  output$dl_motifs <- downloadHandler(
+    filename = function() sprintf("%s_candidate_regulators.csv", run_rv()$obj$meta$gene),
+    content = function(file) utils::write.csv(run_rv()$obj$result, file, row.names = FALSE))
 }
 
 shinyApp(ui, server)

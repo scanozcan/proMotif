@@ -249,6 +249,15 @@ add_chip_peaks <- function(scan, threshold = "05", cell_pattern = NULL, max_mb =
   n_queried <- sum(vapply(cks, function(x) as.numeric(x$n_used %||% 0), numeric(1)))
   modes <- unique(vapply(cks, function(x) x$mode %||% "assembled", ""))
   pk <- ck$peaks; res <- scan$result
+  ## peaks are fetched for the whole span from the first to the last promoter
+  ## window; keep only those overlapping a promoter window, so that peaks between
+  ## distant promoters (e.g. enhancers in a long intron) neither count as
+  ## "experiments with a peak here" nor enlarge n_locus
+  if (nrow(pk) && nrow(prom)) {
+    inw <- vapply(seq_len(nrow(pk)), function(j)
+      any(pk$start[j] <= prom$win_end & pk$end[j] >= prom$win_start), logical(1))
+    pk <- pk[inw, , drop = FALSE]
+  }
   if (nrow(res)) {
     ctr <- res$site_center %||% res$genomic_position
     hit <- lapply(ctr, function(g) which(pk$start <= g & pk$end >= g))
@@ -329,11 +338,16 @@ add_chip_peaks <- function(scan, threshold = "05", cell_pattern = NULL, max_mb =
 }
 
 ## ChIP-Atlas "Target Genes" support for one TF at one gene.
+## Genes in the screen's universe (as the promoter background): the share of
+## all genes bound by a TF in at least as many experiments as this gene is
+## chip_target_q (rank / universe).
+.screen_universe <- 20094L
 .chip_target_row <- function(tf, gene, genome, distance = 1, cell_pattern = NULL,
                              max_mb = 300) {
   out <- data.frame(chip_tf_queried = tf, chip_available = NA, chip_n_exp = NA_integer_,
                     chip_n_bound = NA_integer_, chip_frac_exp = NA_real_,
                     chip_mean_score = NA_real_, chip_max_score = NA_real_,
+                    chip_target_rank = NA_integer_, chip_target_q = NA_real_,
                     stringsAsFactors = FALSE)
   url  <- sprintf("%s/%s/target/%s.%d.tsv", .chipatlas_base, genome, tf, as.integer(distance))
   path <- .chipatlas_get(url, max_mb)
@@ -364,6 +378,23 @@ add_chip_peaks <- function(scan, threshold = "05", cell_pattern = NULL, max_mb =
     out$chip_frac_exp   <- mean(vals > 0)
     out$chip_mean_score <- mean(vals)
     out$chip_max_score  <- max(vals)
+    ## where this gene ranks among the TF's targets genome-wide: experiments
+    ## bound at every listed gene (counted once per file and cell filter, cached)
+    cpath <- sub("\\.tsv$", if (is.null(cell_pattern)) ".counts.rds" else
+                 sprintf(".counts_%s.rds", substr(gsub("[^A-Za-z0-9]+", "_", cell_pattern), 1, 40)), path)
+    cnt <- if (file.exists(cpath)) tryCatch(readRDS(cpath), error = function(e) NULL) else NULL
+    if (is.null(cnt)) {
+      ln <- readLines(path, warn = FALSE)[-1]
+      sp <- strsplit(ln, "\t", fixed = TRUE)
+      cnt <- vapply(sp, function(v) sum(suppressWarnings(as.numeric(v[exp_cols])) > 0, na.rm = TRUE), numeric(1))
+      names(cnt) <- vapply(sp, `[`, "", 1)
+      tryCatch(saveRDS(cnt, cpath), error = function(e) NULL)
+    }
+    g <- out$chip_n_bound
+    if (g > 0) {
+      out$chip_target_rank <- as.integer(sum(cnt >= g))
+      out$chip_target_q    <- min(1, out$chip_target_rank / .screen_universe)
+    } else out$chip_target_q <- 1
   }
   out
 }

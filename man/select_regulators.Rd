@@ -8,9 +8,12 @@ select_regulators(
   disc,
   shortlist_bg_p = 0.2,
   shortlist_p = 1e-04,
-  n_chip = 5,
-  n_motif = 2,
+  n_chip = "auto",
+  n_motif = "auto",
   min_bound = 2,
+  n_chip_pool = 8,
+  motif_bg_p = 0.01,
+  n_motif_range = c(1, 3),
   screen = TRUE,
   screen_kb = 5,
   chip_cell_pattern = NULL,
@@ -23,9 +26,17 @@ select_regulators(
 
 \item{shortlist_bg_p, shortlist_p}{Motif shortlist thresholds (0.2, 1e-4).}
 
-\item{n_chip, n_motif}{TFs per promoter selected by ChIP screen and by motif (5, 2).}
+\item{n_chip, n_motif}{TFs per promoter selected by ChIP screen and by motif:
+\code{"auto"} (default) or fixed numbers.}
 
 \item{min_bound}{Minimum ChIP-Atlas experiments bound near the gene (2).}
+
+\item{n_chip_pool}{With \code{n_chip = "auto"}: ChIP-bound TFs scored per
+promoter (8).}
+
+\item{motif_bg_p, n_motif_range}{With \code{n_motif = "auto"}: motif-only TFs
+with background p at most \code{motif_bg_p} (0.01), at least / at most
+\code{n_motif_range} (1-3; 3-7 without the ChIP screen).}
 
 \item{screen}{Run the ChIP screen (default TRUE).}
 
@@ -52,9 +63,18 @@ per promoter - the TF's best site there has promoter-background
 \code{shortlist_p}; (2) ChIP screen - ChIP-Atlas Target Genes, the number of
 the TF's experiments with a peak within \code{screen_kb} kb of the gene's TSSs
 (one cached file per TF; TFs screened with the same ChIP-Atlas data, e.g. JUN
-and FOS::JUN, count once); (3) per promoter the \code{n_chip} TFs bound in
-most experiments (at least \code{min_bound}) and the \code{n_motif} best
-motif-only TFs are marked for scoring with the proMotif score.
+and FOS::JUN, count once); (3) per promoter, TFs are marked for scoring with
+the proMotif score. By default (\code{"auto"}) these are the
+\code{n_chip_pool} ChIP-bound TFs (at least \code{min_bound} experiments)
+with the largest share of their experiments bound near the gene (lower bound
+of the 95\% Wilson interval, so 3/3 does not beat 60/80) and the motif-only
+TFs with background \eqn{p \le} \code{motif_bg_p} (\code{n_motif_range});
+how many of the scored TFs are shown is decided afterwards from their
+proMotif scores (see \code{\link{run_regulator_discovery}}). Numbers for
+\code{n_chip} / \code{n_motif} give fixed counts (ChIP-bound TFs ranked by
+experiments bound). The screen also reports where the gene ranks among each
+TF's targets genome-wide (\code{screen_target_rank}, \code{screen_target_q}
+= rank / 20,094 genes).
 }
 \seealso{
 \code{\link{summarise_candidates}}, \code{\link{run_regulator_discovery}}

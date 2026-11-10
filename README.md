@@ -401,14 +401,30 @@ unusual for the promoter. Per promoter:
    One file per TF, cached: the first genes download most of them (about
    1-3 GB), later genes reuse them. TFs screened with the same ChIP-Atlas data
    (JUN, JUN::JUNB, FOS::JUN ...) count once.
-3. **Score:** the 5 TFs bound in most experiments (`n_chip`, at least
-   `min_bound = 2`) and the 2 best motif-only TFs (`n_motif`) are scored with
-   the targeted scan and promoter-resolved ChIP-Atlas peaks, and ranked per
-   promoter by their best proMotif score there. Without ChIP, the
-   `n_chip + n_motif` best motifs are scored.
+3. **Score:** the 8 ChIP-bound TFs (at least `min_bound = 2` experiments)
+   with the largest share of their experiments bound near the gene (lower
+   bound of the 95% Wilson interval, so 3/3 does not beat 60/80;
+   `n_chip_pool`) and the motif-only TFs with background p <= 0.01 (1-3,
+   `motif_bg_p`, `n_motif_range`) are scored with the targeted scan and
+   promoter-resolved ChIP-Atlas peaks, and ranked per promoter by their best
+   proMotif score there. Without ChIP, the 3-7 best motifs are scored.
+4. **Show:** how many TFs are shown (plots, `top_TFs/`) is decided by the
+   scores: the hits (best proMotif score >= 0.8, high confidence, at that
+   promoter) plus two more, at least 5 and at most 10 per promoter (column `reported`). A promoter
+   with 2-3 hits shows 5 TFs; one with 7 hits shows 9. `n_chip` / `n_motif`
+   set to numbers give the old fixed counts. The screen also reports where the
+   gene ranks among each TF's targets genome-wide (`screen_target_q`; e.g. TP73
+   is a top 0.4% TP63 target), shown in the plot labels.
 
 Specificity (how much better the motif is at this promoter than at the gene's
-other promoters, `pref`) is reported but not used. `rule = "specific"` keeps the
+other promoters, `pref`) is reported but not used for selection. A scored TF
+whose targeted scan finds a ChIP-supported site (proMotif score >= 0.5) at a
+promoter where its motif alone was too weak to be shortlisted is reported at
+that promoter too (`route = "targeted scan"`; e.g. TP63 at the TP73 P2
+promoter). For genes with several promoters, `promoter_specific_tfs()` compares
+the best proMotif score of every scored TF across the promoters: a TF is
+promoter-specific when its best score is >= 0.5 and >= 0.3 above every other
+promoter. `rule = "specific"` keeps the
 stricter rule instead: background p <= 0.01 and, with more than one promoter,
 >= 10x better than at every other promoter (`max_bg_p`, `min_pref`,
 `n_per_promoter = 3`).
@@ -424,7 +440,9 @@ cand <- summarise_candidates(cand, ex)
 plot_discovery_regulators(cand, d)
 ```
 
-**Outputs** (`results/<GENE>_regulators/`): `_discovery_regulators.pdf` (the
+**Outputs** (`results/<GENE>_regulators/`): `_discovery_promoter_specific.pdf`
+and `.csv` (genes with several promoters: best proMotif score of each scored TF
+at each promoter, promoter-specific TFs framed), `_discovery_regulators.pdf` (the
 scored TFs of each promoter: open circle = motif-only score, filled = proMotif
 score; labels give the ChIP-Atlas experiments over the site, the experiments
 bound near the gene and the motif's background p), `_discovery_candidates.pdf`
@@ -432,7 +450,8 @@ bound near the gene and the motif's background p), `_discovery_candidates.pdf`
 `_discovery_candidates.csv` (one row per TF per promoter: motif, screen, status,
 and for scored TFs `score_best`, `score_motif_only`, `n_significant`,
 `chip_exp_best`, `best_locus` and `binding_check`), `_candidate_regulators.csv`
-(every motif at every promoter) and `top_TFs/<TF>/` (top-sites plot and table of
+(every motif at every promoter) and `top_TFs/<TF>/` (top-sites plot, motif-only
+`-log10 p` promoter map and table of
 each scored TF).
 
 TFs whose best sites fall at the same locus (within `site_window`, 20 bp) are
@@ -596,6 +615,7 @@ plot_binding_sites(s)$genomic
 | `select_candidates(disc, ...)` | Discovery, rule "specific": promoter-specific unusual motifs. |
 | `expand_regulators(disc, ...)` | Targeted single-TF scans of the top candidates. |
 | `summarise_candidates(cand, expanded)` | proMotif scores of the scored candidates per promoter. |
+| `promoter_specific_tfs(cand, expanded)` | Discovery: best proMotif score of each scored TF at each promoter; promoter-specific TFs. |
 | `compare_promoter_regulators(gene, ...)` | TFs that distinguish a gene's promoters. |
 | `list_chip_experiments(tf, ...)` | A TF's ChIP-Atlas experiments, newest first. |
 | `fetch_chip_peaks(tf, chr, from, to, ...)` | ChIP-Atlas peaks of a TF in a region (merged file or budget). |
@@ -615,6 +635,7 @@ plot_binding_sites(s)$genomic
 | `plot_promoter_track(gene, ...)` | CAGE signal, promoters and transcripts of a gene. |
 | `plot_discovery_regulators(cand, disc)` | Discovery: scored regulators per promoter (proMotif score). |
 | `plot_discovery_candidates(cand, disc)` | Discovery: motif shortlist per promoter, by status. |
+| `plot_discovery_promoter_specific(spec, disc)` | Discovery: heat map of TF x promoter proMotif scores, promoter-specific TFs framed. |
 | `plot_regulators(disc, ...)` | Discovery ranking, needle and map plots of the motif table (used by the app). |
 | `plot_regulators_chip(disc, ...)` | Discovery: motif vs ChIP-Atlas evidence. |
 | `plot_promoter_regulators(cmp, ...)` | Promoter-specific and shared TFs. |
@@ -687,7 +708,7 @@ plot_binding_sites(s)$genomic
 | `fetch_chip_peaks_budget()` | `species = "homo_sapiens"`, `threshold = "05"`, `cell_pattern = NULL`, `budget_mb = 1000`, `max_experiments = Inf`, `batch = 24` |
 | `list_chip_experiments()` | `species = "homo_sapiens"`, `cell_pattern = NULL` |
 | `discover_regulators()` | `species = "homo_sapiens"`, `upstream = 2500`, `downstream = 500`, `collection = "CORE"`, `tax_group = "vertebrates"`, `top_n = 20`, `collapse_site = TRUE`, `site_window = 20`, `use_motifmatchr = TRUE`, `jaspar_db = NULL`, `jaspar_release = "2026"`, `rank_by = "background"`, `promoters = "all"`, `transcripts = "protein_coding"`, `merge_dist = NULL`, `max_overlap = 0.2`, `tss_source = "ensembl"` |
-| `run_regulator_discovery()` | `top_n = 15`, `out_root = "results"`, `write_files = TRUE`, `base_size = 12`, `point_size = 3`, `chip = FALSE`, `chip_cell_pattern = NULL`, `chip_max_mb = 300`, `rule = "regulators"`, `n_chip = 5`, `n_motif = 2`, `shortlist_bg_p = 0.2`, `shortlist_p = 1e-4`, `min_bound = 2`, `screen_kb = 5`, `n_per_promoter = 3`, `max_bg_p = 0.01`, `min_pref = 1`, `expand_threshold = 0.75`, `expand_tfs = NULL`, `label_top = 10`, `color_seed = NULL`, plus `discover_regulators()` arguments |
+| `run_regulator_discovery()` | `top_n = 15`, `out_root = "results"`, `write_files = TRUE`, `base_size = 12`, `point_size = 3`, `chip = FALSE`, `chip_cell_pattern = NULL`, `chip_max_mb = 300`, `rule = "regulators"`, `n_chip = "auto"`, `n_motif = "auto"`, `shortlist_bg_p = 0.2`, `shortlist_p = 1e-4`, `min_bound = 2`, `screen_kb = 5`, `n_per_promoter = 3`, `max_bg_p = 0.01`, `min_pref = 1`, `expand_threshold = 0.75`, `expand_tfs = NULL`, `label_top = 10`, `color_seed = NULL`, plus `discover_regulators()` arguments |
 | `add_chip_targets()` | `distance = 1`, `cell_pattern = NULL`, `max_mb = 300` |
 | `expand_regulators()` | `tfs = NULL`, `n = 5`, `by = "auto"`, `chip = FALSE`, `threshold_frac = 0.8`, `hocomoco_version = "v14"`, `scan_unit = "promoter"`, `chip_cell_pattern = NULL`, `chip_max_mb = 300` |
 | `compare_promoter_regulators()` | `species = "homo_sapiens"`, `upstream = 2500`, `downstream = 500`, `transcripts = "protein_coding"`, `merge_dist = NULL`, `max_overlap = 0.2`, `present_p = 0.01`, `absent_p = 0.2`, `collection = "CORE"`, `tax_group = "vertebrates"`, `use_motifmatchr = TRUE`, `jaspar_db = NULL`, `jaspar_release = "2026"`, `tss_source = "ensembl"` |
@@ -738,9 +759,9 @@ them across runs).
 columns (`transcript_id`, `is_canonical`, `transcript_label`, `tss_genomic`,
 `matrix_name`, `score`, `site`) in addition to the above.
 
-Discovery mode writes to `results/<GENE>_regulators/` (`*_discovery_regulators.pdf`,
+Discovery mode writes to `results/<GENE>_regulators/` (`*_discovery_promoter_specific.pdf/.csv`, `*_discovery_regulators.pdf`,
 `*_discovery_candidates.pdf/.csv`, `*_candidate_regulators.csv`, and
-`top_TFs/<TF>/` top-sites plots and tables of the scored TFs); promoter
+`top_TFs/<TF>/` top-sites plots, `-log10 p` promoter maps and tables of the scored TFs); promoter
 comparison writes `*_promoter_regulators.csv` and its plot.
 
 ---

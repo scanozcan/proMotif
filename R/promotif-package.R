@@ -30,7 +30,7 @@ utils::globalVariables(c("base", "biotype", "canonical", "end", "grp", "hj", "ly
                          "kind", "n", "l", "chip_frac_exp", "chip_n_exp",
                          "status", "tf", "class", "label", "panel",
                          "frac", "promoter", "total", "lineage", "value",
-                         "condition", "total_tpm", "lineage_lab"))
+                         "condition", "total_tpm", "lineage_lab", "tf_f", "promoter_f", "score"))
 
 ## ---- internal helpers ------------------------------------------------------
 
