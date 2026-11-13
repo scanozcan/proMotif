@@ -2,18 +2,22 @@
 ## Modes: gene + TF, discover regulators, compare promoters. Promoters from
 ## EPDnew (default) or Ensembl. Discovery selects the likely regulators of each
 ## promoter and scores them with the proMotif score (run_regulator_discovery).
-## The analysis runs once per "Run"; size, colours and the ChIP ring threshold
-## re-style instantly.
+## The analysis runs once per "Run"; text size, colours, the ChIP rings, the
+## promoter-map, logo, usage and gene-track options re-style instantly.
 library(shiny)
 library(proMotif)
 `%||%` <- function(a, b) if (is.null(a) || length(a) == 0) b else a
+## FANTOM5 lineages of the normal vs cancer comparison (gene track)
+LINEAGES <- c("blood", "brain", "liver", "colon", "stomach", "esophagus", "lung", "breast", "kidney",
+              "prostate", "pancreas", "skin", "female_reproductive", "testis", "bone_soft_tissue",
+              "thyroid", "bladder", "head_neck", "eye", "endothelium")
 APP_TITLE <- "proMotif - promoter binding-site scanner (JASPAR + HOCOMOCO)"
 
 ## ---- helpers ----------------------------------------------------------------
 ## run an expression, collecting its console messages for the "Log" tab
 .with_log <- function(expr, log) {
   withCallingHandlers(expr, message = function(m) {
-    log(c(log(), sub("\n$", "", conditionMessage(m))))
+    log(c(isolate(log()), sub("\n$", "", conditionMessage(m))))   # isolate: no reactive loop
     message(conditionMessage(m), appendLF = FALSE)   # still echo to the console
     invokeRestart("muffleMessage")
   })
@@ -79,6 +83,9 @@ ui <- fluidPage(
         checkboxInput("chip", "Add ChIP-Atlas evidence (human)", FALSE),
         conditionalPanel("input.chip",
           textInput("chip_cell", "Cell types (regex, optional)", "", placeholder = "HepG2|liver"),
+          selectInput("chip_pulldown", "Pulldowns",
+                      c("TF antibody + epitope tag" = "all", "TF antibody only" = "native",
+                        "Epitope tag only (FLAG, HA, GFP ...)" = "tagged"), "all"),
           numericInput("chip_max_mb", "ChIP data budget per TF (MB)", 300, min = 10, step = 50),
           helpText("If a TF's ChIP-Atlas data are larger than the budget, the newest",
                    "experiments are used until the budget is reached (files are cached).",
@@ -91,8 +98,30 @@ ui <- fluidPage(
       tags$b("Display (applies instantly, no re-run)"),
       sliderInput("base_size", "Plot text / point size", min = 10, max = 26, value = 16, step = 1),
       conditionalPanel("input.mode != 'compare' && input.chip",
-        selectInput("ring_p", "Black ring: in ChIP peak and p <=",
-                    c("1e-4", "1e-3", "1e-2", "1"), selected = "1e-3")),
+        fluidRow(
+          column(7, selectInput("ring_p", "Black ring: in ChIP peak and p <=",
+                                c("1e-4", "1e-3", "1e-2", "1"), selected = "1e-3")),
+          column(5, numericInput("ring_min_exp", "...and >= experiments", 1, min = 1, step = 1))),
+        checkboxInput("chip_track", "ChIP-seq coverage track under the maps", TRUE)),
+      conditionalPanel("input.mode == 'confirm'",
+        tags$details(tags$summary("Promoter map, logo and usage"),
+          selectInput("map_metric", "Promoter map: y axis",
+                      c("motif -log10 p" = "p", "proMotif score" = "score")),
+          numericInput("map_label", "Promoter map: label the top N sites (score axis)", 0, min = 0, step = 1),
+          checkboxInput("map_facet", "Promoter map: one panel per distant promoter", TRUE),
+          checkboxInput("logo_revcomp", "Motif logo: also reverse complement", TRUE),
+          fluidRow(
+            column(6, numericInput("usage_top_n", "Usage: sample types per promoter", 10, min = 3, step = 1)),
+            column(6, numericInput("usage_min_n", "Normal vs cancer: min samples per group", 3, min = 2, step = 1))))),
+      conditionalPanel("input.track",
+        tags$details(tags$summary("Gene track"),
+          fluidRow(
+            column(6, selectInput("track_tx", "Transcripts", c("all", "protein_coding"))),
+            column(6, numericInput("track_max_tx", "Max transcripts", 30, min = 1, step = 1))),
+          conditionalPanel("input.track_cage",
+            selectInput("track_lineage", "CAGE: normal vs cancer in lineage",
+                        c("all lineages" = "", LINEAGES)),
+            uiOutput("track_group_ui")))),
       actionButton("recolour", "Shuffle colours", width = "100%"),
       numericInput("color_seed", "Colour seed (blank = random per run)", value = NA),
       helpText("Gene + TF takes seconds; discovery and promoter comparison scan",
@@ -130,7 +159,8 @@ server <- function(input, output, session) {
                  hocomoco_version = input$hocomoco_version,
                  jaspar_release = input$jaspar_release, tss_source = input$tss_source)
           if (isTRUE(input$chip) && nrow(s$result))
-            s <- add_chip_peaks(s, cell_pattern = cell, max_mb = input$chip_max_mb)
+            s <- add_chip_peaks(s, cell_pattern = cell, max_mb = input$chip_max_mb,
+                                pulldown = input$chip_pulldown %||% "all")
           if (isTRUE(input$usage)) s <- add_promoter_usage(s)
           list(mode = mode, obj = s)
         } else if (mode == "discover") {
@@ -138,7 +168,8 @@ server <- function(input, output, session) {
           d <- run_regulator_discovery(g, upstream = input$upstream,
                  downstream = input$downstream, top_n = input$top_n, write_files = FALSE,
                  chip = isTRUE(input$chip), chip_cell_pattern = cell,
-                 chip_max_mb = input$chip_max_mb, rule = input$rule,
+                 chip_max_mb = input$chip_max_mb, chip_pulldown = input$chip_pulldown %||% "all",
+                 rule = input$rule,
                  n_chip = if (isTRUE(input$auto_n)) "auto" else input$n_chip,
                  n_motif = if (isTRUE(input$auto_n)) "auto" else input$n_motif,
                  n_per_promoter = input$n_per_promoter,
@@ -154,13 +185,7 @@ server <- function(input, output, session) {
                  tss_source = input$tss_source))
         }
       }, log_rv), error = function(e) list(mode = mode, error = conditionMessage(e)))
-      ## gene track (promoters, transcripts, optional CAGE); a failure here
-      ## never stops the main result
-      if (is.null(res$error) && isTRUE(input$track))
-        res$track <- tryCatch(.with_log(plot_promoter_track(g, tss_source = input$tss_source,
-                                          transcripts = "all", cage = isTRUE(input$track_cage)),
-                                        log_rv),
-                              error = function(e) { log_rv(c(log_rv(), paste("Gene track:", conditionMessage(e)))); NULL })
+      res$gene <- g; res$tss_source <- input$tss_source
     })
     res
   }, ignoreNULL = TRUE)
@@ -191,7 +216,11 @@ server <- function(input, output, session) {
                                      color_seed = seed_rv()),
                   list(promoter_map = plot_promoter_map(r$obj, base_size = bs,
                          point_size = bs / 4, color_seed = seed_rv(),
-                         chip_ring_p = as.numeric(input$ring_p)))),
+                         chip_ring_p = as.numeric(input$ring_p),
+                         chip_ring_min_exp = input$ring_min_exp %||% 1,
+                         facet_regions = isTRUE(input$map_facet %||% TRUE),
+                         y_metric = input$map_metric %||% "p", label_top = input$map_label %||% 0,
+                         chip_track = isTRUE(input$chip_track %||% TRUE)))),
       discover = list(
         regulators = plot_discovery_regulators(r$obj$candidates, r$obj, base_size = bs,
                                                point_size = bs / 4),
@@ -239,7 +268,7 @@ server <- function(input, output, session) {
     if (!isTRUE(ok())) return(tabsetPanel(log_tab))
     nf <- if (mode == "confirm") r$obj$meta$n_facets else 1
     h  <- paste0(max(600, 240 * nf), "px")
-    track_tab <- tabPanel("Gene track", plotOutput("p_track", height = "650px"))
+    track_tab <- tabPanel("Gene track", plotOutput("p_track", height = "auto"))
     if (mode == "discover") {
       cd <- r$obj$candidates
       nreg <- max(c(1, table(cd$promoter_id[if (!is.null(cd$reported)) cd$reported else cd$selected])))
@@ -290,7 +319,10 @@ server <- function(input, output, session) {
                           "background), coloured by what happened to each TF."),
                  plotOutput("p_candidates", height = h_cand)),
         tabPanel("Top sites per TF", br(), uiOutput("exp_sel"),
-                 fluidRow(column(4, numericInput("label_top_d", "Label the top N sites", 10, min = 0, step = 1))),
+                 fluidRow(column(4, radioButtons("exp_view", NULL, inline = TRUE,
+                                                 c("Top sites (proMotif score)" = "top",
+                                                   "Promoter map (motif -log10 p)" = "map"))),
+                          column(4, numericInput("label_top_d", "Label the top N sites", 10, min = 0, step = 1))),
                  plotOutput("p_exp", height = "720px")),
         track_tab,
         tabPanel("Table", br(), downloadButton("dl_csv", "Download candidates (CSV)"), " ",
@@ -318,7 +350,8 @@ server <- function(input, output, session) {
   output$p_top <- renderPlot(.need_plot(top_plot_rv()))
   output$p_logo <- renderPlot({
     r <- run_rv(); req(ok(), r$mode == "confirm")
-    .need_plot(plot_motif_logo(r$obj, base_size = input$base_size))
+    .need_plot(plot_motif_logo(r$obj, base_size = input$base_size,
+                               revcomp = isTRUE(input$logo_revcomp %||% TRUE)))
   })
   output$top_hover_info <- renderUI({
     h <- input$top_hover; p <- top_plot_rv(); req(h, p)
@@ -345,8 +378,10 @@ server <- function(input, output, session) {
       "genome (+): <span style='font-family:monospace'>", s$context_genomic, "</span><br>",
       sprintf("%s bp from the %s TSS (%s) | p = %s, q = %s", s$position, s$promoter_id,
               s$transcript_id, num(s$pvalue), num(s$qvalue)), "<br>",
-      if (!is.null(s$chip_n_exp)) sprintf("ChIP: %s experiment(s), support %s, summit %s bp away<br>",
-                                          s$chip_n_exp, num(s$chip_support, "%.2f"),
+      if (!is.null(s$chip_n_exp)) sprintf("ChIP: %s experiment(s)%s, support %s, summit %s bp away<br>",
+                                          s$chip_n_exp,
+                                          if (isTRUE(s$chip_n_exp_tagged > 0)) sprintf(" (%d tag pulldown)", s$chip_n_exp_tagged) else "",
+                                          num(s$chip_support, "%.2f"),
                                           num(s$chip_summit_dist, "%.0f")) else "",
       sprintf("<b>proMotif score %s</b> (%s)", num(s$promotif_score, "%.2f"), s$confidence))
     left <- h$coords_css$x + 14; top <- h$coords_css$y + 14
@@ -362,7 +397,7 @@ server <- function(input, output, session) {
     req(t)
     t[, intersect(c("site_id", "chrom", "genomic_start", "genomic_end", "motif_strand_genomic",
                     "promoter_id", "position_rel_tss", "databases", "site_motif", "context_genomic",
-                    "pvalue", "qvalue", "chip_n_exp", "chip_support", "promotif_score", "confidence"),
+                    "pvalue", "qvalue", "chip_n_exp", "chip_n_exp_tagged", "chip_support", "promotif_score", "confidence"),
                   names(t)), drop = FALSE]
   }, digits = 3)
   output$dl_top <- downloadHandler(
@@ -375,13 +410,13 @@ server <- function(input, output, session) {
     r <- run_rv(); req(ok(), r$mode == "confirm")
     validate(need(!is.null(r$obj$usage),
       "Tick 'Promoter usage across cell types' and run again (needs the FANTOM5 folder, see ?add_promoter_usage)."))
-    plot_promoter_usage(r$obj, base_size = input$base_size)
+    plot_promoter_usage(r$obj, top_n = input$usage_top_n %||% 10, base_size = input$base_size)
   })
   output$p_usage_cancer <- renderPlot({
     r <- run_rv(); req(ok(), r$mode == "confirm")
     validate(need(!is.null(r$obj$usage),
       "Tick 'Promoter usage across cell types' and run again."))
-    p <- plot_promoter_usage_cancer(r$obj, base_size = input$base_size)
+    p <- plot_promoter_usage_cancer(r$obj, min_n = input$usage_min_n %||% 3, base_size = input$base_size)
     validate(need(!is.null(p),
       "Not enough normal and cancer samples of the same lineage express this gene."))
     p
@@ -401,11 +436,45 @@ server <- function(input, output, session) {
   output$p_candidates <- renderPlot(.need_plot(plots_rv()$candidates))
   output$p_specific <- renderPlot(.need_plot(plots_rv()$specific,
                          "Only one promoter (or no scored TF): nothing to compare between promoters."))
+  ## ---- gene track: promoters, transcripts and optional CAGE, rebuilt when its
+  ## options or the text size change (Ensembl and FANTOM5 data are cached)
+  output$track_group_ui <- renderUI({
+    r <- run_rv(); u <- r$obj$usage
+    if (is.null(u)) return(helpText("Tick 'Promoter usage' (Gene + TF) to compare the cells",
+                                     "that use one promoter with the other primary cells."))
+    pids <- rownames(u$tpm)
+    selectInput("track_groups", "CAGE: compare",
+                c("normal vs cancer" = "",
+                  stats::setNames(pids, sprintf("primary cells using %s vs other primary cells", pids))))
+  })
+  track_rv <- reactive({
+    r <- run_rv(); req(is.null(r$error), isTRUE(input$track), r$gene)
+    grp <- NULL
+    tg <- input$track_groups %||% ""
+    if (isTRUE(input$track_cage) && nzchar(tg) && !is.null(r$obj$usage)) {
+      tab <- r$obj$usage$table; prim <- tab[tab$category == "primary cells", , drop = FALSE]
+      p1 <- prim$sample_type[prim$dominant == tg]
+      if (length(p1))
+        grp <- stats::setNames(list(p1, setdiff(prim$sample_type, p1)),
+                               c(sprintf("primary cells using %s", tg), "other primary cells"))
+    }
+    lin <- input$track_lineage %||% ""
+    tryCatch(.with_log(plot_promoter_track(r$gene, tss_source = r$tss_source,
+                                           transcripts = input$track_tx %||% "all",
+                                           cage = isTRUE(input$track_cage),
+                                           lineage = if (nzchar(lin)) lin else NULL, groups = grp,
+                                           max_transcripts = input$track_max_tx %||% 30,
+                                           base_size = round(input$base_size * 0.8)), log_rv),
+             error = function(e) { log_rv(c(isolate(log_rv()), paste("Gene track:", conditionMessage(e)))); NULL })
+  })
   output$p_track <- renderPlot({
-    r <- run_rv()
-    validate(need(!is.null(r$track),
-      "Tick 'Gene track' and run again (see the Log tab if it failed)."))
-    r$track
+    validate(need(isTRUE(input$track), "Tick 'Gene track' to draw it."))
+    p <- track_rv()
+    validate(need(!is.null(p), "The gene track could not be drawn (see the Log tab)."))
+    p
+  }, height = function() {
+    p <- tryCatch(track_rv(), error = function(e) NULL)
+    round(80 * (attr(p, "height") %||% 8))
   })
   output$p_cmp     <- renderPlot(.need_plot(plots_rv()$cmp,
                         "No TF passes the present/absent cut-offs for these promoters."))
@@ -430,8 +499,16 @@ server <- function(input, output, session) {
     validate(need(!is.null(s) && nrow(s$result) > 0,
                   "No sites for this TF at the chosen threshold."))
     bs <- input$base_size
-    plot_top_sites(s, top_n = input$label_top_d %||% 10, base_size = bs, point_size = bs / 4,
-                   color_seed = seed_rv(), chip_ring_p = as.numeric(input$ring_p))
+    if (identical(input$exp_view, "map"))
+      plot_promoter_map(s, base_size = bs, point_size = bs / 4, color_seed = seed_rv(),
+                        chip_ring_p = as.numeric(input$ring_p),
+                        chip_ring_min_exp = input$ring_min_exp %||% 1,
+                        label_top = input$label_top_d %||% 10,
+                        chip_track = isTRUE(input$chip_track %||% TRUE))
+    else
+      plot_top_sites(s, top_n = input$label_top_d %||% 10, base_size = bs, point_size = bs / 4,
+                     color_seed = seed_rv(), chip_ring_p = as.numeric(input$ring_p),
+                     chip_track = isTRUE(input$chip_track %||% TRUE))
   })
 
   table_rv <- reactive({
@@ -447,9 +524,10 @@ server <- function(input, output, session) {
     keep <- switch(r$mode,
       confirm = c("promoter_id", "transcript_id", "is_canonical", "database", "matrix_id",
                   "position", "strand", "score_frac", "pvalue", "qvalue",
-                  "genomic_start", "genomic_end", "site_motif", "chip_n_exp", "chip_support",
+                  "genomic_start", "genomic_end", "site_motif", "chip_n_exp", "chip_n_exp_tagged", "chip_support",
                   "promotif_score", "confidence", "chip_cell_types"),
       discover = c("promoter_id", "tf", "status", "reported", "route", "screen_n_bound", "screen_n_exp", "screen_target_q",
+                   "screen_source",
                    "bg_pvalue", "pvalue", "position", "site", "pref", "score_best", "score_motif_only",
                    "n_significant", "chip_exp_best", "best_locus", "binding_check"),
       compare = names(t))

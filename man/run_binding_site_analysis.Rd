@@ -33,6 +33,7 @@ run_binding_site_analysis(
   chip_max_experiments = Inf,
   chip_sigma = 50,
   chip_support = c("locus", "all"),
+  chip_pulldown = getOption("promotif.chip_pulldown", "all"),
   chip_ring_p = 0.001,
   chip_ring_min_exp = 1,
   usage = FALSE,
@@ -95,7 +96,8 @@ first use, files are cached).}
 \code{"10"} or \code{"20"}.}
 
 \item{chip_cell_pattern}{Optional regular expression restricting ChIP
-experiments to cell types (e.g. \code{"HepG2|liver"}).}
+experiments to ChIP-Atlas cell types (e.g. \code{"Hep G2|Hepatocytes"};
+names as in \code{list_chip_experiments(tf)$cell_type}).}
 
 \item{chip_max_mb}{Skip ChIP-Atlas files larger than this (MB; default 300).}
 
@@ -106,6 +108,8 @@ experiments to cell types (e.g. \code{"HepG2|liver"}).}
 \item{chip_sigma}{Summit-proximity scale in bp for ChIP support (default 50).}
 
 \item{chip_support}{Normalisation of ChIP support: `"locus"` (experiments binding the locus, default) or `"all"` (all queried experiments).}
+
+\item{chip_pulldown}{Which ChIP-seq pulldowns count: `"all"` (default; TF-antibody and epitope-tag pulldowns such as FLAG-, HA- or GFP-tagged TF, including those ChIP-Atlas files under "Epitope tags"), `"native"` (TF antibody only) or `"tagged"` (tag only). Default from `getOption("promotif.chip_pulldown", "all")`; see [fetch_chip_peaks()].}
 
 \item{chip_ring_p, chip_ring_min_exp}{Which in-peak sites get a black ring on
 the promoter map (see \code{\link{plot_promoter_map}}).}

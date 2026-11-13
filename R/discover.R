@@ -422,7 +422,9 @@ plot_regulators <- function(disc, base_size = 12, point_size = 3) {
 ##      good as in most promoters (background p <= shortlist_bg_p, 0.2) and a
 ##      real match (FIMO per-site p <= shortlist_p, 1e-4);
 ##   2. ChIP screen: ChIP-Atlas Target Genes - how many of the TF's experiments
-##      have a peak within +/- screen_kb of the gene's TSSs (cached per TF);
+##      have a peak within +/- screen_kb of the gene's TSSs (cached per TF); a
+##      Target Genes file larger than the budget (screen_max_mb = chip_max_mb,
+##      e.g. CTCF 113 MB) is replaced by the TF's newest experiments within it;
 ##   3. the best n_chip ChIP-bound TFs per promoter (most experiments bound,
 ##      then background p) and the n_motif best motif-only TFs (no ChIP data or
 ##      no peak; by background p) are scored with the targeted scan and
@@ -430,7 +432,8 @@ plot_regulators <- function(disc, base_size = 12, point_size = 3) {
 ##      by their best proMotif score there.
 ## Returns one row per TF per promoter (its best site there) with the screen
 ## and the selection; summarise_candidates() adds the proMotif scores.
-.chip_screen <- function(tfs, gene, species, distance = 5, cell_pattern = NULL, max_mb = 300) {
+.chip_screen <- function(tfs, gene, species, distance = 5, cell_pattern = NULL, max_mb = 300,
+                         region = NULL) {
   genome <- .chipatlas_genome(species, coordinates = FALSE)
   if (is.null(genome) || !length(tfs)) return(NULL)
   fix_case <- if (species == "homo_sapiens") toupper else
@@ -441,7 +444,7 @@ plot_regulators <- function(disc, base_size = 12, point_size = 3) {
     parts <- fix_case(unique(trimws(strsplit(tf, "::", fixed = TRUE)[[1]])))
     rows  <- do.call(rbind, lapply(parts, .chip_target_row, gene = gene, genome = genome,
                                    distance = distance, cell_pattern = cell_pattern,
-                                   max_mb = max_mb))
+                                   max_mb = max_mb, region = region))
     ok   <- which(rows$chip_available %in% TRUE)
     best <- if (length(ok)) ok[which.max(rows$chip_n_bound[ok])] else 1L
     cbind(tf = tf, rows[best, , drop = FALSE], stringsAsFactors = FALSE)
@@ -486,7 +489,9 @@ plot_regulators <- function(disc, base_size = 12, point_size = 3) {
 #' @param screen_kb 1, 5 or 10 kb around the TSSs (Target Genes distance; 5).
 #' @param chip_cell_pattern Optional regular expression restricting ChIP
 #'   experiments to cell types.
-#' @param screen_max_mb Skip Target Genes files larger than this (MB).
+#' @param screen_max_mb ChIP screen budget per TF (MB): a Target Genes file
+#'   larger than this (and not cached) is replaced by the TF's newest
+#'   experiments, read until the budget is used.
 #' @param extra_tfs TFs to score in addition ("requested").
 #' @return One row per TF per promoter (its best site there) with the motif
 #'   evidence, the screen (\code{screen_n_bound}, \code{screen_n_exp}), the
@@ -523,12 +528,13 @@ select_regulators <- function(disc, shortlist_bg_p = 0.2, shortlist_p = 1e-4,
   r$shortlisted <- r$p_rank <= shortlist_bg_p & r$pvalue <= shortlist_p
   ## ChIP screen of the shortlisted TFs (gene-level, ChIP-Atlas Target Genes)
   scr_cols <- c("chip_tf_queried", "chip_available", "chip_n_exp", "chip_n_bound", "chip_frac_exp",
-                "chip_target_rank", "chip_target_q")
+                "chip_target_rank", "chip_target_q", "chip_source")
   for (cc in scr_cols) r[[paste0("screen_", sub("^chip_", "", cc))]] <- NA
   if (isTRUE(screen)) {
     sc <- .chip_screen(unique(c(r$tf[r$shortlisted], extra_tfs)), disc$meta$gene,
                        disc$meta$species %||% "homo_sapiens", distance = screen_kb,
-                       cell_pattern = chip_cell_pattern, max_mb = screen_max_mb)
+                       cell_pattern = chip_cell_pattern, max_mb = screen_max_mb,
+                       region = .screen_region(disc))
     if (!is.null(sc)) {
       i <- match(r$tf, sc$tf)
       r$screen_tf_queried <- sc$chip_tf_queried[i]
@@ -538,6 +544,7 @@ select_regulators <- function(disc, shortlist_bg_p = 0.2, shortlist_p = 1e-4,
       r$screen_frac_exp  <- sc$chip_frac_exp[i]
       r$screen_target_rank <- sc$chip_target_rank[i]
       r$screen_target_q  <- sc$chip_target_q[i]
+      r$screen_source    <- sc$chip_source[i]
     }
   }
   bound <- r$shortlisted & !is.na(r$screen_n_bound) & r$screen_n_bound >= min_bound
@@ -1143,6 +1150,9 @@ plot_discovery_candidates <- function(cand, disc, top_n = 15, base_size = 12, po
 #' @param chip_cell_pattern Optional regular expression restricting ChIP
 #'   experiments to cell types.
 #' @param chip_max_mb ChIP-Atlas download budget per TF (MB).
+#' @param chip_pulldown Which ChIP-seq pulldowns count: \code{"all"} (default;
+#'   TF-antibody and epitope-tag pulldowns), \code{"native"} or \code{"tagged"};
+#'   see \code{\link{fetch_chip_peaks}}.
 #' @param rule \code{"regulators"} (default) or \code{"specific"}.
 #' @param n_chip,n_motif,shortlist_bg_p,shortlist_p,min_bound,screen_kb See
 #'   \code{\link{select_regulators}}.
@@ -1166,6 +1176,7 @@ run_regulator_discovery <- function(gene, species = "homo_sapiens",
                                     write_files = TRUE,
                                     base_size = 12, point_size = 3,
                                     chip = FALSE, chip_cell_pattern = NULL, chip_max_mb = 300,
+                                    chip_pulldown = getOption("promotif.chip_pulldown", "all"),
                                     rule = c("regulators", "specific"),
                                     n_chip = "auto", n_motif = "auto", shortlist_bg_p = 0.2,
                                     shortlist_p = 1e-4, min_bound = 2, screen_kb = 5,
@@ -1174,6 +1185,8 @@ run_regulator_discovery <- function(gene, species = "homo_sapiens",
                                     label_top = 10, color_seed = NULL,
                                     chip_distance = NULL, expand_top = NULL, expand_by = NULL, ...) {
   rule <- match.arg(rule)
+  ## the pulldown choice reaches every ChIP-Atlas call of this run (screen, scans)
+  op <- options(promotif.chip_pulldown = .check_pulldown(chip_pulldown)); on.exit(options(op), add = TRUE)
   if (!is.null(expand_top))
     message("  expand_top is no longer used: see n_chip / n_motif (rule = 'regulators') or n_per_promoter.")
   disc <- discover_regulators(gene, species = species, upstream = upstream,

@@ -245,11 +245,13 @@ quite differently, and the logo shows which sequence the sites are matched to.
 from [ChIP-Atlas](https://chip-atlas.org) (human, hg38; MACS2 q < 1e-5 by
 default). For heterodimer matrices such as `MAX::MYC`, the peaks of both
 partners are combined. Restrict the experiments to relevant cell types with a
-regular expression (spaces, `-` and `_` are ignored):
+regular expression on the ChIP-Atlas cell type names (spaces, `-` and `_` are
+ignored; check the names with `table(list_chip_experiments("FOXA1")$cell_type)`,
+e.g. ChIP-Atlas calls 501mel "501A"):
 
 ```r
 run_binding_site_analysis("AFP", "FOXA1", chip = TRUE,
-                          chip_cell_pattern = "HepG2|liver")
+                          chip_cell_pattern = "Hep G2|Hepatocytes|Liver")
 ```
 
 **Data budget.** ChIP-Atlas merges all experiments of a TF into one file, which
@@ -290,6 +292,32 @@ In discovery mode, `chip = TRUE` first screens the shortlisted TFs with the
 ChIP-Atlas Target Genes tables (experiments with a peak within 5 kb of the gene's
 TSSs, `screen_kb`) and then scores the selected TFs with promoter-resolved peaks
 (see below).
+
+**Antibody or epitope tag.** A TF's ChIP-seq can come from an antibody against
+the TF ("native") or from a pulldown of a tagged TF (FLAG, HA, V5, GFP, HALO,
+biotin ...), often overexpressed or knocked in. ChIP-Atlas files most tag
+pulldowns under "Epitope tags", "GFP" or "Biotin" rather than under the TF, and
+some under the TF itself. proMotif tells them apart from the ChIP-Atlas metadata
+(antibody field, or the sample title naming the TF next to a tag word) and lets
+you choose with `chip_pulldown`:
+
+- `"all"` (default): TF-antibody and tag pulldowns, including tag pulldowns of
+  the TF filed under "Epitope tags" / "GFP" / "Biotin" (e.g. GFP-tagged YY1 in HEK293);
+- `"native"`: TF-antibody pulldowns only;
+- `"tagged"`: tag pulldowns only.
+
+```r
+run_binding_site_analysis("TFF1", "YY1", chip = TRUE, chip_pulldown = "native")
+options(promotif.chip_pulldown = "native")    # for the whole session
+table(list_chip_experiments("YY1")$pulldown)  # native / tagged experiments
+update_chip_pulldown("hg38")                  # rebuild the table from ChIP-Atlas (~400 MB download)
+```
+
+Each site gets `chip_n_exp_tagged`, the tag pulldowns among `chip_n_exp`. The
+Target Genes screen in discovery mode uses the experiments filed under the TF
+(tag pulldowns filed under "Epitope tags" are not in those tables). The table of
+tagged pulldowns ships with proMotif (`inst/extdata/chipatlas_pulldown_hg38.tsv.gz`,
+mm10 as well) and is built by `build_chip_pulldown_table()`.
 
 ---
 
@@ -399,7 +427,9 @@ unusual for the promoter. Per promoter:
 2. **ChIP screen** (`chip = TRUE`): ChIP-Atlas Target Genes, the number of the
    TF's experiments with a peak within 5 kb of the gene's TSSs (`screen_kb`).
    One file per TF, cached: the first genes download most of them (about
-   1-3 GB), later genes reuse them. TFs screened with the same ChIP-Atlas data
+   1-3 GB), later genes reuse them. A file larger than the budget
+   (`chip_max_mb`; CTCF is 113 MB) is not skipped: the TF's newest experiments
+   are read instead until the budget is used (`screen_source` says which). TFs screened with the same ChIP-Atlas data
    (JUN, JUN::JUNB, FOS::JUN ...) count once.
 3. **Score:** the 8 ChIP-bound TFs (at least `min_bound = 2` experiments)
    with the largest share of their experiments bound near the gene (lower
@@ -487,18 +517,28 @@ launch_app()
 ```
 
 - **Gene + TF:** top sites (proMotif score, hover a point to see the site
-  id, coordinates, sequence with flanks, p- and q-values, ChIP-seq evidence and
-  score; ranked table and download), motif logo, promoter map,
+  id, coordinates, sequence with flanks, p- and q-values, ChIP-seq evidence with
+  tag pulldowns and score; ranked table and download), motif logo, promoter map,
   promoter usage and normal vs cancer plots, canonical / per-transcript /
   genomic views (scores and significance), promoter table, site table.
-- **Discover regulators:** ranking, needle and map plots, motif vs ChIP-Atlas
-  plot, targeted maps of the top TFs, table.
+- **Discover regulators:** the scored regulators of each promoter, the
+  promoter-specific heat map, the motif shortlist (candidates), the top-sites
+  plot or promoter map of each scored TF, and the candidate table (with the
+  ChIP screen and `screen_source`).
 - **Compare promoters:** promoter-specific and shared TFs, promoter table.
+- **Gene track** (all modes): promoters and transcripts, optionally with FANTOM5
+  CAGE in normal vs cancer samples (all lineages or one), or, after a run with
+  promoter usage, in the primary cells that use one promoter vs the other
+  primary cells.
 
-The analysis runs once per **Run**; text size, colours and the ring cut-off
-restyle the plots instantly. ChIP-Atlas evidence, its cell types and data budget,
-motif database releases and promoter usage are selectable, and a **Log** tab
-shows the console messages of the run.
+The analysis runs once per **Run**. ChIP-Atlas evidence (cell types, pulldowns,
+data budget), motif database releases and promoter usage are set before a run.
+Everything under **Display** restyles the plots without running again: text
+size, colours, the significance rings (`chip_ring_p`, `chip_ring_min_exp`), the
+ChIP-seq coverage track, the promoter map (`y_metric`, `label_top`,
+`facet_regions`), the logo orientation (`revcomp`), the usage plots (`top_n`,
+`min_n`) and the gene track (`transcripts`, `max_transcripts`, `lineage`,
+`groups`). A **Log** tab shows the console messages of the run.
 
 ---
 
@@ -537,6 +577,7 @@ r <- run_binding_site_analysis(
   chip_max_experiments = Inf,          # cap on experiments
   chip_sigma           = 50,           # summit-proximity scale (bp)
   chip_support         = "locus",      # or "all"
+  chip_pulldown        = "all",        # "native" (TF antibody) or "tagged" (epitope tag)
   chip_ring_p          = 1e-3,         # promoter map: ring in-peak sites with p <= this
   chip_ring_min_exp    = 1,            # promoter map: ... and >= this many experiments
   # ---- promoter usage (FANTOM5)
@@ -673,11 +714,12 @@ plot_binding_sites(s)$genomic
 | `support` | `"locus"` | or `"all"` |
 | `prior` | `1` | pseudo-count on locus experiments |
 | `rep_half` | `20` | experiments giving half the replication term |
+| `pulldown` | `"all"` | `"native"` (TF antibody) or `"tagged"` (epitope tag); `options(promotif.chip_pulldown)` |
 
 **`run_binding_site_analysis()`**: all arguments of `scan_binding_sites()`, plus
 `chip = FALSE`, `chip_threshold = "05"`, `chip_cell_pattern = NULL`,
 `chip_max_mb = 300`, `chip_mode = "auto"`, `chip_max_experiments = Inf`,
-`chip_sigma = 50`, `chip_support = "locus"`, `chip_ring_p = 1e-3`,
+`chip_sigma = 50`, `chip_support = "locus"`, `chip_pulldown = "all"`, `chip_ring_p = 1e-3`,
 `chip_ring_min_exp = 1`, `usage = FALSE`, `usage_flank = 500`,
 `top_sites_min_score = 0.5`, `top_sites_min_n = 10`, `label_top = 10`,
 `out_root = "results"`, `write_files = TRUE`, `color_seed = NULL`,
@@ -694,6 +736,9 @@ plot_binding_sites(s)$genomic
 | `plot_promoter_usage()` | `top_n = 10`, `base_size = 12` |
 | `plot_promoter_usage_cancer()` | `min_n = 3`, `base_size = 12` |
 | `plot_promoter_track()` | `species = "homo_sapiens"`, `tss_source = "epd"`, `transcripts = "all"`, `normal = "primary cells"`, `lineage = NULL`, `cage = TRUE`, `max_transcripts = 30`, `tx_match = 500`, `flank = 2000`, `max_overlap = 0.2`, `base_size = 11`, `dir = NULL`, `groups = NULL` |
+| `plot_discovery_regulators()` | `top_n = 10` (all reported TFs when the `reported` column exists), `base_size = 12`, `point_size = 3` |
+| `plot_discovery_candidates()` | `top_n = 15`, `base_size = 12`, `point_size = 3` |
+| `plot_discovery_promoter_specific()` | `base_size = 12` |
 | `plot_regulators()`, `plot_regulators_chip()` | `base_size = 12`, `point_size = 3` |
 | `plot_promoter_regulators()` | `top_n = 30`, `base_size = 12` |
 
@@ -704,12 +749,16 @@ plot_binding_sites(s)$genomic
 | `top_binding_sites()` | `min_score = 0.5`, `min_n = 10` |
 | `score_binding_sites()` | `weights = getOption("promotif.score_weights")` (intercept -3, motif 4, databases 0.5, chip 2.5, replication 2) |
 | `add_promoter_usage()` | `flank = 500`, `dir = NULL`, `min_tpm = 1`, `dominant_frac = 0.6` |
-| `fetch_chip_peaks()` | `species = "homo_sapiens"`, `threshold = "05"`, `cell_pattern = NULL`, `max_mb = 300`, `mode = "auto"`, `max_experiments = Inf` |
-| `fetch_chip_peaks_budget()` | `species = "homo_sapiens"`, `threshold = "05"`, `cell_pattern = NULL`, `budget_mb = 1000`, `max_experiments = Inf`, `batch = 24` |
-| `list_chip_experiments()` | `species = "homo_sapiens"`, `cell_pattern = NULL` |
+| `fetch_chip_peaks()` | `species = "homo_sapiens"`, `threshold = "05"`, `cell_pattern = NULL`, `max_mb = 300`, `mode = "auto"`, `max_experiments = Inf`, `pulldown = "all"` |
+| `fetch_chip_peaks_budget()` | `species = "homo_sapiens"`, `threshold = "05"`, `cell_pattern = NULL`, `budget_mb = 1000`, `max_experiments = Inf`, `batch = 24`, `pulldown = "all"` |
+| `list_chip_experiments()` | `species = "homo_sapiens"`, `cell_pattern = NULL`, `pulldown = "all"` |
 | `discover_regulators()` | `species = "homo_sapiens"`, `upstream = 2500`, `downstream = 500`, `collection = "CORE"`, `tax_group = "vertebrates"`, `top_n = 20`, `collapse_site = TRUE`, `site_window = 20`, `use_motifmatchr = TRUE`, `jaspar_db = NULL`, `jaspar_release = "2026"`, `rank_by = "background"`, `promoters = "all"`, `transcripts = "protein_coding"`, `merge_dist = NULL`, `max_overlap = 0.2`, `tss_source = "ensembl"` |
-| `run_regulator_discovery()` | `top_n = 15`, `out_root = "results"`, `write_files = TRUE`, `base_size = 12`, `point_size = 3`, `chip = FALSE`, `chip_cell_pattern = NULL`, `chip_max_mb = 300`, `rule = "regulators"`, `n_chip = "auto"`, `n_motif = "auto"`, `shortlist_bg_p = 0.2`, `shortlist_p = 1e-4`, `min_bound = 2`, `screen_kb = 5`, `n_per_promoter = 3`, `max_bg_p = 0.01`, `min_pref = 1`, `expand_threshold = 0.75`, `expand_tfs = NULL`, `label_top = 10`, `color_seed = NULL`, plus `discover_regulators()` arguments |
-| `add_chip_targets()` | `distance = 1`, `cell_pattern = NULL`, `max_mb = 300` |
+| `run_regulator_discovery()` | `top_n = 15`, `out_root = "results"`, `write_files = TRUE`, `base_size = 12`, `point_size = 3`, `chip = FALSE`, `chip_cell_pattern = NULL`, `chip_max_mb = 300` (also the ChIP screen budget), `chip_pulldown = "all"`, `rule = "regulators"`, `n_chip = "auto"`, `n_motif = "auto"`, `shortlist_bg_p = 0.2`, `shortlist_p = 1e-4`, `min_bound = 2`, `screen_kb = 5`, `n_per_promoter = 3`, `max_bg_p = 0.01`, `min_pref = 1`, `expand_threshold = 0.75`, `expand_tfs = NULL`, `label_top = 10`, `color_seed = NULL`, plus `discover_regulators()` arguments |
+| `select_regulators()` | `shortlist_bg_p = 0.2`, `shortlist_p = 1e-4`, `n_chip = "auto"`, `n_motif = "auto"`, `min_bound = 2`, `n_chip_pool = 8`, `motif_bg_p = 0.01`, `n_motif_range = c(1, 3)`, `screen = TRUE`, `screen_kb = 5`, `chip_cell_pattern = NULL`, `screen_max_mb = 300` (budget of the ChIP screen), `extra_tfs = NULL` |
+| `select_candidates()` | `n_per_promoter = 3`, `max_bg_p = 0.01`, `min_pref = 1`, `extra_tfs = NULL` |
+| `summarise_candidates()` | `promote_score = 0.5` |
+| `promoter_specific_tfs()` | `min_score = 0.5`, `min_delta = 0.3` |
+| `add_chip_targets()` | `distance = 1`, `cell_pattern = NULL`, `max_mb = 300`, `pulldown = "all"` |
 | `expand_regulators()` | `tfs = NULL`, `n = 5`, `by = "auto"`, `chip = FALSE`, `threshold_frac = 0.8`, `hocomoco_version = "v14"`, `scan_unit = "promoter"`, `chip_cell_pattern = NULL`, `chip_max_mb = 300` |
 | `compare_promoter_regulators()` | `species = "homo_sapiens"`, `upstream = 2500`, `downstream = 500`, `transcripts = "protein_coding"`, `merge_dist = NULL`, `max_overlap = 0.2`, `present_p = 0.01`, `absent_p = 0.2`, `collection = "CORE"`, `tax_group = "vertebrates"`, `use_motifmatchr = TRUE`, `jaspar_db = NULL`, `jaspar_release = "2026"`, `tss_source = "ensembl"` |
 | `run_promoter_comparison()` | `top_n = 30`, `out_root = "results"`, `write_files = TRUE`, `base_size = 12`, plus `compare_promoter_regulators()` arguments |
@@ -752,7 +801,7 @@ them across runs).
 | `site_motif`, `site_genomic`, `context_genomic` | sequence in motif orientation, on the plus strand, and with flanks |
 | `score_frac`, `pvalue`, `qvalue` | PWM score fraction, per-site p-value, BH q-value |
 | `motif_strength`, `db_agreement`, `motif_only_score` | motif terms and the motif-only score |
-| `chip_n_exp`, `chip_support`, `chip_support_all`, `chip_replication`, `chip_summit_dist`, `chip_cell_types` | ChIP-Atlas evidence |
+| `chip_n_exp`, `chip_n_exp_tagged`, `chip_support`, `chip_support_all`, `chip_replication`, `chip_summit_dist`, `chip_cell_types` | ChIP-Atlas evidence (`chip_n_exp_tagged`: tag pulldowns among `chip_n_exp`) |
 | `promotif_score`, `confidence`, `score_z`, `significant` | proMotif score, class, robust z-score, locus-level significance |
 
 `binding_sites.csv` has one row per window and database with the window-level

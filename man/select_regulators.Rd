@@ -45,7 +45,9 @@ with background p at most \code{motif_bg_p} (0.01), at least / at most
 \item{chip_cell_pattern}{Optional regular expression restricting ChIP
 experiments to cell types.}
 
-\item{screen_max_mb}{Skip Target Genes files larger than this (MB).}
+\item{screen_max_mb}{ChIP screen budget per TF (MB): a Target Genes file
+larger than this (and not cached) is replaced by the TF's newest
+experiments, read until the budget is used.}
 
 \item{extra_tfs}{TFs to score in addition ("requested").}
 }

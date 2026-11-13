@@ -14,7 +14,8 @@ add_chip_peaks(
   sigma = 50,
   support = c("locus", "all"),
   prior = 1,
-  rep_half = 20
+  rep_half = 20,
+  pulldown = getOption("promotif.chip_pulldown", "all")
 )
 }
 \arguments{
@@ -24,8 +25,11 @@ annotated by \code{\link{add_chip_peaks}}).}
 \item{threshold}{MACS2 q-value class: \code{"05"}, \code{"10"} or \code{"20"}
 (q < 1e-5, 1e-10, 1e-20).}
 
-\item{cell_pattern}{Optional regular expression on the sample annotation
-(e.g. \code{"HepG2|liver"}); spaces, "-" and "_" are ignored.}
+\item{cell_pattern}{Optional regular expression matched against the
+ChIP-Atlas cell type name (e.g. \code{"Hep G2|Hepatocytes"}) or experiment
+accession; spaces, "-" and "_" are ignored. ChIP-Atlas names some lines
+differently from common usage (501mel = "501A"); see
+\code{table(list_chip_experiments(tf)$cell_type)}.}
 
 \item{max_mb}{Data budget in MB (default 300); see Details.}
 
@@ -40,6 +44,9 @@ annotated by \code{\link{add_chip_peaks}}).}
 \item{prior}{Pseudo-count added to the number of locus experiments (default 1, so one experiment gives at most 0.5).}
 
 \item{rep_half}{Number of experiments at which the replication term reaches half its maximum (default 20).}
+
+\item{pulldown}{`"all"` (default), `"native"` or `"tagged"`; see [fetch_chip_peaks()].
+`chip_n_exp_tagged` counts the tag pulldowns among `chip_n_exp`.}
 }
 \value{
 The scan, annotated (unchanged if ChIP-Atlas was unavailable).

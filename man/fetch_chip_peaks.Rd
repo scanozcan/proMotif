@@ -14,7 +14,8 @@ fetch_chip_peaks(
   cell_pattern = NULL,
   max_mb = 300,
   mode = c("auto", "assembled", "experiments"),
-  max_experiments = Inf
+  max_experiments = Inf,
+  pulldown = getOption("promotif.chip_pulldown", "all")
 )
 }
 \arguments{
@@ -27,8 +28,11 @@ fetch_chip_peaks(
 \item{threshold}{MACS2 q-value class: \code{"05"}, \code{"10"} or \code{"20"}
 (q < 1e-5, 1e-10, 1e-20).}
 
-\item{cell_pattern}{Optional regular expression on the sample annotation
-(e.g. \code{"HepG2|liver"}); spaces, "-" and "_" are ignored.}
+\item{cell_pattern}{Optional regular expression matched against the
+ChIP-Atlas cell type name (e.g. \code{"Hep G2|Hepatocytes"}) or experiment
+accession; spaces, "-" and "_" are ignored. ChIP-Atlas names some lines
+differently from common usage (501mel = "501A"); see
+\code{table(list_chip_experiments(tf)$cell_type)}.}
 
 \item{max_mb}{Data budget in MB (default 300); see Details.}
 
@@ -36,9 +40,17 @@ fetch_chip_peaks(
 
 \item{max_experiments}{Maximum number of per-experiment files (default `Inf`;
 a finite value switches to per-experiment files).}
+
+\item{pulldown}{Which pulldowns count as the TF's ChIP-seq: `"all"` (default;
+TF-antibody and epitope-tag pulldowns, including tag pulldowns that
+ChIP-Atlas files under "Epitope tags", "GFP" or "Biotin"), `"native"`
+(TF-antibody pulldowns only) or `"tagged"` (tag pulldowns only). Set for a
+whole session with `options(promotif.chip_pulldown = ...)`. See
+[build_chip_pulldown_table()].}
 }
 \value{
-A list with \code{peaks} (data frame with \code{summit}),
+A list with \code{peaks} (data frame with \code{summit} and
+  \code{pulldown}),
   \code{available}, \code{mode}, \code{n_total} and \code{n_used}
   (experiments), or \code{NULL} if ChIP-Atlas was not reachable.
 }

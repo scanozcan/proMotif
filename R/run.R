@@ -19,7 +19,8 @@
 #' @param chip_threshold MACS2 q-value class of the peaks: \code{"05"},
 #'   \code{"10"} or \code{"20"}.
 #' @param chip_cell_pattern Optional regular expression restricting ChIP
-#'   experiments to cell types (e.g. \code{"HepG2|liver"}).
+#'   experiments to ChIP-Atlas cell types (e.g. \code{"Hep G2|Hepatocytes"};
+#'   names as in \code{list_chip_experiments(tf)$cell_type}).
 #' @param chip_max_mb Skip ChIP-Atlas files larger than this (MB; default 300).
 #' @param chip_ring_p,chip_ring_min_exp Which in-peak sites get a black ring on
 #'   the promoter map (see \code{\link{plot_promoter_map}}).
@@ -34,6 +35,7 @@
 #' @param chip_max_experiments Maximum number of ChIP-Atlas experiments (default `Inf`).
 #' @param chip_sigma Summit-proximity scale in bp for ChIP support (default 50).
 #' @param chip_support Normalisation of ChIP support: `"locus"` (experiments binding the locus, default) or `"all"` (all queried experiments).
+#' @param chip_pulldown Which ChIP-seq pulldowns count: `"all"` (default; TF-antibody and epitope-tag pulldowns such as FLAG-, HA- or GFP-tagged TF, including those ChIP-Atlas files under "Epitope tags"), `"native"` (TF antibody only) or `"tagged"` (tag only). Default from `getOption("promotif.chip_pulldown", "all")`; see [fetch_chip_peaks()].
 #' @param tss_source `"ensembl"` (default) or `"epd"`; see [scan_binding_sites()].
 #' @param flank Bases on each side of a site in the sequence context (default 10).
 #' @param top_sites_min_score proMotif score for the top-sites table (default 0.5).
@@ -77,6 +79,7 @@ run_binding_site_analysis <- function(gene, tf = NULL,
                                       chip_max_experiments = Inf,
                                       chip_sigma       = 50,
                                       chip_support     = c("locus", "all"),
+                                      chip_pulldown    = getOption("promotif.chip_pulldown", "all"),
                                       chip_ring_p      = 1e-3,
                                       chip_ring_min_exp = 1,
                                       usage            = FALSE,
@@ -87,6 +90,7 @@ run_binding_site_analysis <- function(gene, tf = NULL,
                                       top_sites_min_n  = 10,
                                       label_top        = 10) {
   chip_mode <- match.arg(chip_mode); tss_source <- match.arg(tss_source)
+  op <- options(promotif.chip_pulldown = .check_pulldown(chip_pulldown)); on.exit(options(op), add = TRUE)
   ## one colour seed per run, so every plot of this run uses the same two
   ## database colours (color_seed = a number makes them reproducible across runs)
   if (is.null(color_seed)) color_seed <- sample.int(1e6, 1)
@@ -101,7 +105,7 @@ run_binding_site_analysis <- function(gene, tf = NULL,
              top_n = top_n, out_root = out_root, write_files = write_files,
              base_size = base_size, point_size = point_size,
              chip = chip, chip_cell_pattern = chip_cell_pattern,
-             chip_max_mb = chip_max_mb, jaspar_release = jaspar_release,
+             chip_max_mb = chip_max_mb, chip_pulldown = chip_pulldown, jaspar_release = jaspar_release,
              transcripts = transcripts, merge_dist = merge_dist, max_overlap = max_overlap,
              tss_source = tss_source))
   }
@@ -128,7 +132,8 @@ run_binding_site_analysis <- function(gene, tf = NULL,
     scan <- add_chip_peaks(scan, threshold = chip_threshold,
                            cell_pattern = chip_cell_pattern, max_mb = chip_max_mb,
                            mode = chip_mode, max_experiments = chip_max_experiments,
-                           sigma = chip_sigma, support = match.arg(chip_support))
+                           sigma = chip_sigma, support = match.arg(chip_support),
+                           pulldown = chip_pulldown)
 
   if (isTRUE(usage)) scan <- add_promoter_usage(scan, flank = usage_flank)
   top_sites <- top_binding_sites(scan, min_score = top_sites_min_score, min_n = top_sites_min_n)

@@ -17,6 +17,7 @@ run_regulator_discovery(
   chip = FALSE,
   chip_cell_pattern = NULL,
   chip_max_mb = 300,
+  chip_pulldown = getOption("promotif.chip_pulldown", "all"),
   rule = c("regulators", "specific"),
   n_chip = "auto",
   n_motif = "auto",
@@ -59,6 +60,10 @@ peaks in the targeted scans (default FALSE = motif evidence only).}
 experiments to cell types.}
 
 \item{chip_max_mb}{ChIP-Atlas download budget per TF (MB).}
+
+\item{chip_pulldown}{Which ChIP-seq pulldowns count: \code{"all"} (default;
+TF-antibody and epitope-tag pulldowns), \code{"native"} or \code{"tagged"};
+see \code{\link{fetch_chip_peaks}}.}
 
 \item{rule}{\code{"regulators"} (default) or \code{"specific"}.}
 

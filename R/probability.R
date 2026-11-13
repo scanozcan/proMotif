@@ -166,7 +166,7 @@ score_binding_sites <- function(scan, weights = getOption("promotif.score_weight
   hit$gene <- m$gene; hit$tf <- m$tf
   hit$chrom <- paste0("chr", sub("^chr", "", m$chr))
   hit$position_rel_tss <- as.integer(hit$position)
-  for (cc in c("genomic_start", "genomic_end", "genomic_position", "chip_n_exp"))
+  for (cc in c("genomic_start", "genomic_end", "genomic_position", "chip_n_exp", "chip_n_exp_tagged"))
     if (cc %in% names(hit)) hit[[cc]] <- as.integer(round(hit[[cc]]))
   hit <- hit[order(-hit$promotif_score, hit$pvalue, -hit$score_frac), , drop = FALSE]
 
@@ -198,7 +198,7 @@ score_binding_sites <- function(scan, weights = getOption("promotif.score_weight
             "databases", "matrix_ids", "n_databases_nearby",
             "site_motif", "site_genomic", "context_genomic",
             "score_frac", "pvalue", "qvalue", "motif_strength", "db_agreement", "motif_only_score",
-            "chip_n_exp", "chip_support", "chip_support_all", "chip_replication", "chip_summit_dist", "chip_cell_types",
+            "chip_n_exp", "chip_n_exp_tagged", "chip_support", "chip_support_all", "chip_replication", "chip_summit_dist", "chip_cell_types",
             "promotif_score", "confidence", "score_z", "significant")
   out <- lo[, intersect(keep, names(lo)), drop = FALSE]; rownames(out) <- NULL
   hk2 <- c("hit_id", "site_id", setdiff(keep, c("site_id", "rank", "locus_start", "locus_end",

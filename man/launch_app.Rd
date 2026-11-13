@@ -13,9 +13,12 @@ launch_app(launch.browser = TRUE)
 Called for its side effect (runs the app); does not return.
 }
 \description{
-Opens an interactive front-end: type a gene and TF, adjust the promoter
-window / threshold, and view the plots. The network scan runs once per
-"Run scan"; text/point size and colours re-style instantly.
+Opens an interactive front-end with three modes: a gene and a TF (binding
+sites), discovery of the likely regulators of each promoter, and comparison
+of a gene's promoters, each with a gene track (optionally with FANTOM5 CAGE).
+The analysis runs once per "Run"; text size, colours, the significance rings,
+the ChIP-seq track, the promoter map, logo, usage and gene-track options
+re-style the plots instantly.
 }
 \examples{
 \dontrun{

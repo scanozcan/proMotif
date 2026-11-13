@@ -3,6 +3,7 @@
 export(add_chip_peaks)
 export(add_chip_targets)
 export(add_promoter_usage)
+export(build_chip_pulldown_table)
 export(clear_sequence_cache)
 export(compare_promoter_regulators)
 export(discover_regulators)
@@ -36,6 +37,7 @@ export(select_regulators)
 export(summarise_candidates)
 export(summarise_promoters)
 export(top_binding_sites)
+export(update_chip_pulldown)
 import(ggplot2)
 importFrom(stats,
   ave,

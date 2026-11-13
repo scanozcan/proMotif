@@ -4,17 +4,33 @@
 \alias{add_chip_targets}
 \title{Annotate discovery-mode candidates with ChIP-Atlas Target Genes}
 \usage{
-add_chip_targets(disc, distance = 1, cell_pattern = NULL, max_mb = 300)
+add_chip_targets(
+  disc,
+  distance = 1,
+  cell_pattern = NULL,
+  max_mb = 300,
+  pulldown = getOption("promotif.chip_pulldown", "all")
+)
 }
 \arguments{
 \item{disc}{A list returned by \code{\link{discover_regulators}}.}
 
 \item{distance}{1, 5 or 10 (kb from the TSS).}
 
-\item{cell_pattern}{Optional regular expression on the sample annotation
-(e.g. \code{"HepG2|liver"}); spaces, "-" and "_" are ignored.}
+\item{cell_pattern}{Optional regular expression matched against the
+ChIP-Atlas cell type name (e.g. \code{"Hep G2|Hepatocytes"}) or experiment
+accession; spaces, "-" and "_" are ignored. ChIP-Atlas names some lines
+differently from common usage (501mel = "501A"); see
+\code{table(list_chip_experiments(tf)$cell_type)}.}
 
 \item{max_mb}{Skip Target Genes files larger than this many MB (default 300).}
+
+\item{pulldown}{Which pulldowns count as the TF's ChIP-seq: `"all"` (default;
+TF-antibody and epitope-tag pulldowns, including tag pulldowns that
+ChIP-Atlas files under "Epitope tags", "GFP" or "Biotin"), `"native"`
+(TF-antibody pulldowns only) or `"tagged"` (tag pulldowns only). Set for a
+whole session with `options(promotif.chip_pulldown = ...)`. See
+[build_chip_pulldown_table()].}
 }
 \value{
 \code{disc} with \code{chip_*} columns added to \code{top} and
@@ -24,4 +40,9 @@ add_chip_targets(disc, distance = 1, cell_pattern = NULL, max_mb = 300)
 For each top candidate TF, the share of its ChIP-Atlas experiments with a
 peak within +/- \code{distance} kb of the gene's TSS. Heterodimer names
 (\code{"MAX::MYC"}) are split and the better-supported partner is reported.
+}
+\details{
+Target Genes tables contain the experiments ChIP-Atlas files under
+  the TF: with `pulldown = "all"` these are TF-antibody and tag pulldowns
+  filed under the TF; tag pulldowns filed under "Epitope tags" are not included.
 }

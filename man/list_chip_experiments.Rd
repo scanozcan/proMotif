@@ -4,7 +4,12 @@
 \alias{list_chip_experiments}
 \title{List the ChIP-Atlas experiments of a TF}
 \usage{
-list_chip_experiments(tf, species = "homo_sapiens", cell_pattern = NULL)
+list_chip_experiments(
+  tf,
+  species = "homo_sapiens",
+  cell_pattern = NULL,
+  pulldown = getOption("promotif.chip_pulldown", "all")
+)
 }
 \arguments{
 \item{tf}{TF symbol (e.g. `"ESR1"`).}
@@ -13,10 +18,14 @@ list_chip_experiments(tf, species = "homo_sapiens", cell_pattern = NULL)
 
 \item{cell_pattern}{Optional regular expression matched against the cell
 type (spaces, `-` and `_` are ignored), e.g. `"MCF-7|T-47D"`.}
+
+\item{pulldown}{`"all"` (default), `"native"` or `"tagged"`; see
+[fetch_chip_peaks()]. With `"all"` or `"tagged"`, tag pulldowns of the TF
+that ChIP-Atlas files under "Epitope tags", "GFP" or "Biotin" are added.}
 }
 \value{
-A data frame with `srx`, `cell_type` and `accession_number`, or
-  `NULL` if ChIP-Atlas could not be reached.
+A data frame with `srx`, `cell_type`, `pulldown` (`"native"` or
+  `"tagged"`) and `accession_number`, or `NULL` if ChIP-Atlas could not be reached.
 }
 \description{
 Reads the experiment list of a TF (accession and cell type) from the header

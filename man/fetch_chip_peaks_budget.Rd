@@ -14,7 +14,8 @@ fetch_chip_peaks_budget(
   cell_pattern = NULL,
   budget_mb = 1000,
   max_experiments = Inf,
-  batch = 24L
+  batch = 24L,
+  pulldown = getOption("promotif.chip_pulldown", "all")
 )
 }
 \arguments{
@@ -27,8 +28,11 @@ fetch_chip_peaks_budget(
 \item{threshold}{MACS2 q-value class: \code{"05"}, \code{"10"} or \code{"20"}
 (q < 1e-5, 1e-10, 1e-20).}
 
-\item{cell_pattern}{Optional regular expression on the sample annotation
-(e.g. \code{"HepG2|liver"}); spaces, "-" and "_" are ignored.}
+\item{cell_pattern}{Optional regular expression matched against the
+ChIP-Atlas cell type name (e.g. \code{"Hep G2|Hepatocytes"}) or experiment
+accession; spaces, "-" and "_" are ignored. ChIP-Atlas names some lines
+differently from common usage (501mel = "501A"); see
+\code{table(list_chip_experiments(tf)$cell_type)}.}
 
 \item{budget_mb}{Maximum amount of peak data to use, in MB (default 1000).}
 
@@ -36,11 +40,13 @@ fetch_chip_peaks_budget(
 
 \item{batch}{Number of files downloaded in parallel per round (default 24;
 parallel downloads need the curl package >= 5.0).}
+
+\item{pulldown}{`"all"` (default), `"native"` or `"tagged"`; see [fetch_chip_peaks()].}
 }
 \value{
-A list with `peaks` (data frame incl. `summit`), `available`,
-  `mode = "experiments"`, `n_total`, `n_used`, `mb_used` and `experiments`
-  (one row per experiment, with `used`).
+A list with `peaks` (data frame incl. `summit` and `pulldown`), `available`,
+  `mode = "experiments"`, `n_total`, `n_used`, `n_tagged`, `mb_used` and `experiments`
+  (one row per experiment, with `pulldown` and `used`).
 }
 \description{
 Downloads per-experiment ChIP-Atlas peak files of a TF, newest experiments
